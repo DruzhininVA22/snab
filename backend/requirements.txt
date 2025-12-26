@@ -1,0 +1,14 @@
+Django==5.0.7
+psycopg[binary]==3.2.1
+django-environ==0.11.2
+djangorestframework==3.15.2
+django-filter==24.3
+celery==5.4.0
+redis==5.0.8
+channels==4.1.0
+uvicorn==0.30.3
+django-jazzmin==3.0.1
+channels-redis==4.2.0
+django-cors-headers
+openpyxl==3.1.5
+pdfminer.six==20221105
