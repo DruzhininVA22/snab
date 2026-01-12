@@ -59,12 +59,14 @@ class Category(models.Model):
             self.is_leaf = True
             self.level = 0
             self.path = self.code + '/'
-        
-        # Валидация: если есть дети — is_leaf = False
-        if self.children.exists():
+
+        # Валидация: если есть дети — is_leaf = False.
+        # self.children требует, чтобы у объекта уже был первичный ключ.
+        if self.pk is not None and self.children.exists():
             self.is_leaf = False
-        
+
         super().save(*args, **kwargs)
+
     
     def clean(self):
         if self.parent and self.parent.id == self.id:

@@ -1,49 +1,61 @@
+"""
+API эндпоинты для работы с поставщиками.
+
+Содержит:
+- SupplierViewSet: CRUD по поставщикам с фильтрацией и поиском.
+"""
+
 from django.db.models import Q
-from rest_framework import viewsets, permissions
+from rest_framework import permissions, viewsets
 from rest_framework.response import Response
 
-from .models import (
-    Supplier,
-    SupplierPriceList,
-    SupplierPriceLine,
-)
+from .models import Supplier
 from .serializers import (
     SupplierListSerializer,
     SupplierDetailSerializer,
     SupplierWriteSerializer,
-    SupplierPriceListSummarySerializer,
-    SupplierPriceListDetailSerializer,
-    SupplierPriceLineSerializer,
 )
 
 
 class SupplierViewSet(viewsets.ModelViewSet):
     """
-    /api/suppliers/
-    - GET (list): используется слева в SuppliersPage для списка поставщиков
-    - GET (retrieve): детальная карточка справа
-    - POST/PATCH: формы создания/редактирования
+    CRUD по поставщикам.
+
+    Эндпоинты:
+    - GET    /api/suppliers/suppliers/       — список (страница SuppliersPage)
+    - GET    /api/suppliers/suppliers/{id}/  — детальная карточка
+    - POST   /api/suppliers/suppliers/       — создать
+    - PATCH  /api/suppliers/suppliers/{id}/  — частичное обновление
+    - PUT    /api/suppliers/suppliers/{id}/  — полное обновление
     """
+
     permission_classes = [permissions.AllowAny]
 
     def get_serializer_class(self):
-        # форма создания/редактирования
+        """
+        Выбор сериализатора в зависимости от действия:
+        - create/update/partial_update → SupplierWriteSerializer (форма)
+        - retrieve → SupplierDetailSerializer (детальная карточка)
+        - list/прочие → SupplierListSerializer (краткое представление)
+        """
         if self.action in ("create", "update", "partial_update"):
             return SupplierWriteSerializer
-        # просмотр одной карточки (в т.ч. для редактирования)
-        if self.action in ("retrieve",):
+        if self.action == "retrieve":
             return SupplierDetailSerializer
-        # список слева
         return SupplierListSerializer
 
     def get_queryset(self):
         """
-        Мы поддерживаем те параметры, которые уже шлёт фронт:
-        - ?search=текст
-        - ?status=regular / preferred / blocked
-        - ?region=Москва
-        - ?ordering=name (или любая колонка)
-        - ?page_size=200 (пагинация DRF сделает остальное)
+        Базовый queryset поставщиков + фильтры.
+
+        Поддерживаемые query‑параметры:
+        - ?search=...  — поиск по:
+            name, activity, inn, address,
+            terms.delivery_regions, terms.payment_terms
+        - ?status=...  — фильтр по полю Supplier.status
+                         (preferred / regular / blocked)
+        - ?region=...  — фильтр по terms.delivery_regions (icontains)
+        - ?ordering=... — сортировка, по умолчанию name
         """
         qs = (
             Supplier.objects.all()
@@ -53,6 +65,7 @@ class SupplierViewSet(viewsets.ModelViewSet):
 
         params = self.request.query_params
 
+        # Поиск по тексту
         search = params.get("search")
         if search:
             s = search.strip()
@@ -66,96 +79,50 @@ class SupplierViewSet(viewsets.ModelViewSet):
                     | Q(terms__payment_terms__icontains=s)
                 )
 
+        # Фильтр по статусу (важен для теста test_filter_and_search_suppliers)
         status_val = params.get("status")
         if status_val:
             qs = qs.filter(status=status_val)
 
+        # Фильтр по региону
         region = params.get("region")
         if region:
             r = region.strip()
             if r:
                 qs = qs.filter(terms__delivery_regions__icontains=r)
 
-        ordering = params.get("ordering")
+        # Сортировка
+        ordering = params.get("ordering") or "name"
         if ordering:
-            # пример: "name" или "-name"
             qs = qs.order_by(ordering)
 
         return qs
 
-    def create(self, request, *args, **kwargs):
+    def update(self, request, *args, **kwargs):
         """
-        Создание нового поставщика из SupplierCreatePage.
-        Использует SupplierWriteSerializer.
+        Обновление поставщика (PUT/PATCH).
+
+        Используем SupplierWriteSerializer для валидации и записи,
+        а на выход отдаём SupplierDetailSerializer, чтобы фронт
+        получил полную карточку.
         """
-        serializer = SupplierWriteSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        instance = serializer.save()
-        out = SupplierDetailSerializer(instance)
-        return Response(out.data)
+        partial = kwargs.pop("partial", False)
+        instance = self.get_object()
+
+        in_serializer = SupplierWriteSerializer(
+            instance, data=request.data, partial=partial
+        )
+        in_serializer.is_valid(raise_exception=True)
+        supplier = in_serializer.save()
+
+        out_serializer = SupplierDetailSerializer(supplier)
+        return Response(out_serializer.data)
 
     def partial_update(self, request, *args, **kwargs):
         """
-        PATCH /api/suppliers/{id}/
-        Редактирование поставщика из SupplierEditPage.
+        Частичное обновление (PATCH).
+
+        Просто пробрасываем в общий update с partial=True.
         """
-        instance = self.get_object()
-        serializer = SupplierWriteSerializer(
-            instance, data=request.data, partial=True
-        )
-        serializer.is_valid(raise_exception=True)
-        instance = serializer.save()
-        out = SupplierDetailSerializer(instance)
-        return Response(out.data)
-
-    # update (PUT) и destroy (DELETE) можно оставить
-    # базовыми, если они тебе нужны потом.
-
-
-class SupplierPriceListViewSet(viewsets.ReadOnlyModelViewSet):
-    """
-    /api/supplier-pricelists/
-    Детали прайсов (пока фронт их не дергает напрямую,
-    но оставляем на будущее).
-    """
-    permission_classes = [permissions.AllowAny]
-
-    def get_serializer_class(self):
-        if self.action in ("retrieve",):
-            return SupplierPriceListDetailSerializer
-        return SupplierPriceListSummarySerializer
-
-    def get_queryset(self):
-        qs = (
-            SupplierPriceList.objects.all()
-            .select_related("supplier")
-            .prefetch_related("lines")
-        )
-
-        supplier_id = self.request.query_params.get("supplier")
-        if supplier_id:
-            qs = qs.filter(supplier_id=supplier_id)
-
-        return qs.order_by("-valid_from", "-created_at")
-
-
-class SupplierPriceLineViewSet(viewsets.ReadOnlyModelViewSet):
-    """
-    /api/supplier-pricelines/
-    Строки прайс-листа. Сейчас в UI напрямую не вызывается,
-    но пригодится для сравнения цен.
-    """
-    permission_classes = [permissions.AllowAny]
-    serializer_class = SupplierPriceLineSerializer
-
-    def get_queryset(self):
-        qs = (
-            SupplierPriceLine.objects.all()
-            .select_related("pricelist", "unit", "pricelist__supplier")
-        )
-
-        pricelist_id = self.request.query_params.get("pricelist")
-        if pricelist_id:
-            qs = qs.filter(pricelist_id=pricelist_id)
-
-        return qs.order_by("pricelist_id", "item")
+        kwargs["partial"] = True
+        return self.update(request, *args, **kwargs)

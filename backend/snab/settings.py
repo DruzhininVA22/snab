@@ -100,8 +100,7 @@ CHANNEL_LAYERS = {
 }
 
 STATIC_URL = "static/"
-# Для dev collectstatic не обязателен; если нужен сбор статики — добавим STATIC_ROOT:
-# STATIC_ROOT = BASE_DIR / "staticfiles"
+STATIC_ROOT = "app/staticfiles/"
 
 REST_FRAMEWORK = {
     "DEFAULT_FILTER_BACKENDS": ["django_filters.rest_framework.DjangoFilterBackend"],

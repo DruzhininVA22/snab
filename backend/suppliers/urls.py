@@ -1,30 +1,11 @@
+from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import (
-    SupplierViewSet,
-    SupplierPriceListViewSet,
-    SupplierPriceLineViewSet,
-)
+
+from .views import SupplierViewSet
 
 router = DefaultRouter()
+router.register(r"", SupplierViewSet, basename="supplier")
 
-# основной справочник поставщиков
-router.register(
-    r'suppliers',
-    SupplierViewSet,
-    basename='supplier'
-)
-
-# прайсы (пока опционально, но пусть будут)
-router.register(
-    r'supplier-pricelists',
-    SupplierPriceListViewSet,
-    basename='supplier-pricelist'
-)
-
-router.register(
-    r'supplier-pricelines',
-    SupplierPriceLineViewSet,
-    basename='supplier-priceline'
-)
-
-urlpatterns = router.urls
+urlpatterns = [
+    path("", include(router.urls)),
+]

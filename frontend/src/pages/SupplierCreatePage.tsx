@@ -2,6 +2,14 @@
  * Создание поставщика.
  *
  * Форма добавления записи в справочник поставщиков SNAB.
+ *
+ * ВАЖНО: payload соответствует SupplierWriteSerializer на бэкенде:
+ * {
+ *   name, inn, activity, address, status, rating, is_active, notes,
+ *   categories: number[],
+ *   contacts: ContactRow[],
+ *   terms: TermState
+ * }
  */
 import * as React from 'react';
 import {
@@ -44,7 +52,7 @@ type ContactRow = {
 type TermState = {
   payment_terms: string;
   min_order_amount: string;
-  lead_time_days: string;
+  lead_time_days: string; // храним строкой, на бэке превратится в число
   delivery_regions: string;
   delivery_notes: string;
 };
@@ -112,8 +120,8 @@ export default function SupplierCreatePage() {
           const raw = Array.isArray(data)
             ? data
             : Array.isArray(data?.results)
-            ? data.results
-            : [];
+              ? data.results
+              : [];
           if (raw.length) {
             const opts = raw.map((c: any) => ({
               id: c.id,
@@ -126,7 +134,7 @@ export default function SupplierCreatePage() {
             return;
           }
         } catch {
-          /* просто пробуем следующий url */
+          // пробуем следующий URL
         }
       }
     })();
@@ -142,51 +150,69 @@ export default function SupplierCreatePage() {
     setContacts((prev) => prev.filter((_, i) => i !== idx));
   };
 
-  const canSave = !!name.trim();
+  const canSave = name.trim().length > 0 && !saving;
 
-  const save = async () => {
+  const handleSave = async () => {
     if (!canSave) return;
     setSaving(true);
     try {
+      // приводим contacts и terms к формату, который ждёт бэкенд
+      const cleanedContacts = contacts
+        .map((c) => ({
+          person_name: c.person_name.trim(),
+          position: c.position.trim(),
+          phone: c.phone.trim(),
+          email: c.email.trim(),
+          comment: c.comment.trim(),
+        }))
+        // отбрасываем полностью пустые контакты
+        .filter(
+          (c) =>
+            c.person_name ||
+            c.position ||
+            c.phone ||
+            c.email ||
+            c.comment,
+        );
+
+      const leadDays = terms.lead_time_days.trim();
       const payload: any = {
-        name,
-        inn,
-        activity,
-        address,
-        is_active: isActive,
-        rating,
+        name: name.trim(),
+        inn: inn.trim() || null,
+        activity: activity.trim(),
+        address: address.trim(),
         status,
-        notes,
+        rating,
+        is_active: isActive,
+        notes: notes.trim(),
         categories: categoryIds,
-        contacts: contacts
-          .filter(
-            (c) =>
-              c.person_name.trim() ||
-              c.phone.trim() ||
-              c.email.trim()
-          )
-          .map((c) => ({
-            person_name: c.person_name,
-            position: c.position,
-            phone: c.phone,
-            email: c.email,
-            comment: c.comment,
-          })),
-        terms: {
-          payment_terms: terms.payment_terms,
-          min_order_amount: terms.min_order_amount,
-          lead_time_days: terms.lead_time_days
-            ? Number(terms.lead_time_days)
-            : null,
-          delivery_regions: terms.delivery_regions,
-          delivery_notes: terms.delivery_notes,
-        },
       };
 
-      await http.post(fixPath(API_BASE), payload);
-      nav('/suppliers');
-    } catch {
-      alert('Не удалось создать поставщика');
+      if (cleanedContacts.length) {
+        payload.contacts = cleanedContacts;
+      }
+
+      if (
+        terms.payment_terms ||
+        terms.min_order_amount ||
+        terms.delivery_regions ||
+        terms.delivery_notes ||
+        leadDays
+      ) {
+        payload.terms = {
+          payment_terms: terms.payment_terms.trim(),
+          min_order_amount: terms.min_order_amount.trim(),
+          delivery_regions: terms.delivery_regions.trim(),
+          delivery_notes: terms.delivery_notes.trim(),
+          lead_time_days: leadDays ? Number(leadDays) : null,
+        };
+      }
+
+      const url = fixPath(`${API_BASE}`);
+      await http.post(url, payload);
+      nav(fixPath('/suppliers'));
+    } catch (e: any) {
+      alert(e?.message || 'Ошибка сохранения поставщика');
     } finally {
       setSaving(false);
     }
@@ -197,42 +223,52 @@ export default function SupplierCreatePage() {
       <Card>
         {loading && <LinearProgress />}
         <CardContent>
-          <Stack
-            direction="row"
-            alignItems="center"
-            justifyContent="space-between"
-            sx={{ mb: 2 }}
-          >
-            <Typography variant="h6">Новый поставщик</Typography>
-            <Stack direction="row" spacing={1}>
-              <Button onClick={save} variant="contained" disabled={!canSave || saving}>
-                Сохранить
-              </Button>
-              <Button onClick={() => nav('/suppliers')}>Отмена</Button>
-            </Stack>
-          </Stack>
+          <Typography variant="h6" sx={{ mb: 2 }}>
+            Новый поставщик
+          </Typography>
 
-          {/* Основные реквизиты */}
-          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ mb: 2, flexWrap: 'wrap' }}>
+          {/* Основные поля */}
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ mb: 2 }}>
             <TextField
+              label="Название поставщика"
               size="small"
-              label="Название *"
+              fullWidth
+              required
               value={name}
               onChange={(e) => setName(e.target.value)}
-              sx={{ flex: 1, minWidth: 240 }}
             />
             <TextField
-              size="small"
               label="ИНН / рег. номер"
+              size="small"
+              fullWidth
               value={inn}
               onChange={(e) => setInn(e.target.value)}
-              sx={{ flex: 1, minWidth: 160 }}
             />
-            <FormControl size="small" sx={{ minWidth: 140 }}>
-              <InputLabel id="status">Статус</InputLabel>
+          </Stack>
+
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ mb: 2 }}>
+            <TextField
+              label="Основная деятельность"
+              size="small"
+              fullWidth
+              value={activity}
+              onChange={(e) => setActivity(e.target.value)}
+            />
+            <TextField
+              label="Адрес"
+              size="small"
+              fullWidth
+              value={address}
+              onChange={(e) => setAddress(e.target.value)}
+            />
+          </Stack>
+
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ mb: 2 }}>
+            <FormControl size="small" sx={{ minWidth: 160 }}>
+              <InputLabel id="status-label">Статус допуска</InputLabel>
               <Select
-                labelId="status"
-                label="Статус"
+                labelId="status-label"
+                label="Статус допуска"
                 value={status}
                 onChange={(e) => setStatus(e.target.value as string)}
               >
@@ -241,105 +277,145 @@ export default function SupplierCreatePage() {
                 <MenuItem value="blocked">Блокирован</MenuItem>
               </Select>
             </FormControl>
+
             <TextField
+              label="Рейтинг (0–5)"
               size="small"
               type="number"
-              label="Рейтинг (0..5)"
-              value={rating}
               inputProps={{ min: 0, max: 5, step: 1 }}
-              onChange={(e) => setRating(Number(e.target.value))}
-              sx={{ width: 120 }}
+              value={rating}
+              onChange={(e) => setRating(Number(e.target.value) || 0)}
+              sx={{ width: 140 }}
+            />
+
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={isActive}
+                  onChange={(e) => setIsActive(e.target.checked)}
+                />
+              }
+              label="Активен"
             />
           </Stack>
 
-          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ mb: 2, flexWrap: 'wrap' }}>
-            <TextField
-              size="small"
-              label="Основная деятельность"
-              value={activity}
-              onChange={(e) => setActivity(e.target.value)}
-              sx={{ flex: 1, minWidth: 240 }}
-            />
-            <TextField
-              size="small"
-              label="Адрес"
-              value={address}
-              onChange={(e) => setAddress(e.target.value)}
-              sx={{ flex: 1, minWidth: 240 }}
-            />
+          {/* Категории */}
+          <Stack direction="column" spacing={1} sx={{ mb: 2 }}>
+            <Typography variant="subtitle2">Категории поставляемых материалов</Typography>
+            <FormControl size="small" fullWidth>
+              <InputLabel id="cats-label">Категории</InputLabel>
+              <Select
+                labelId="cats-label"
+                label="Категории"
+                multiple
+                value={categoryIds}
+                onChange={(e) =>
+                  setCategoryIds(
+                    typeof e.target.value === 'string'
+                      ? e.target.value.split(',').map((v) => Number(v))
+                      : (e.target.value as number[]),
+                  )
+                }
+                renderValue={(selected) =>
+                  categoriesOptions
+                    .filter((c) => selected.includes(c.id))
+                    .map((c) => c.label)
+                    .join(', ') || 'Не выбрано'
+                }
+              >
+                {categoriesOptions.map((c) => (
+                  <MenuItem key={c.id} value={c.id}>
+                    {c.label}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
           </Stack>
 
-          <FormControlLabel
-            control={
-              <Checkbox
-                checked={isActive}
-                onChange={(e) => setIsActive(e.target.checked)}
-              />
-            }
-            label="Активен"
-            sx={{ mb: 2 }}
-          />
-
+          {/* Условия поставки */}
+          <Typography variant="subtitle2" sx={{ mt: 2, mb: 1 }}>
+            Условия поставки и оплаты
+          </Typography>
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ mb: 2 }}>
+            <TextField
+              label="Условия оплаты"
+              size="small"
+              fullWidth
+              value={terms.payment_terms}
+              onChange={(e) =>
+                setTerms((t) => ({ ...t, payment_terms: e.target.value }))
+              }
+            />
+            <TextField
+              label="Минимальный заказ"
+              size="small"
+              fullWidth
+              value={terms.min_order_amount}
+              onChange={(e) =>
+                setTerms((t) => ({ ...t, min_order_amount: e.target.value }))
+              }
+            />
+          </Stack>
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ mb: 2 }}>
+            <TextField
+              label="Срок поставки (дней)"
+              size="small"
+              type="number"
+              inputProps={{ min: 0 }}
+              value={terms.lead_time_days}
+              onChange={(e) =>
+                setTerms((t) => ({ ...t, lead_time_days: e.target.value }))
+              }
+            />
+            <TextField
+              label="Регионы поставки"
+              size="small"
+              fullWidth
+              value={terms.delivery_regions}
+              onChange={(e) =>
+                setTerms((t) => ({ ...t, delivery_regions: e.target.value }))
+              }
+            />
+          </Stack>
           <TextField
+            label="Логистика / доставка"
             size="small"
-            label="Заметки / Описание"
+            fullWidth
             multiline
             minRows={2}
-            fullWidth
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
             sx={{ mb: 2 }}
+            value={terms.delivery_notes}
+            onChange={(e) =>
+              setTerms((t) => ({ ...t, delivery_notes: e.target.value }))
+            }
           />
 
-          {/* Категории поставок */}
-          <FormControl size="small" fullWidth sx={{ mb: 3 }}>
-            <InputLabel id="cats">Категории поставок</InputLabel>
-            <Select
-              labelId="cats"
-              multiple
-              value={categoryIds}
-              label="Категории поставок"
-              onChange={(e) => {
-                const val = e.target.value as number[];
-                setCategoryIds(val);
-              }}
-              renderValue={(selected) => {
-                const map = new Map(categoriesOptions.map((o) => [o.id, o.label]));
-                return (selected as number[])
-                  .map((id) => map.get(id) || id)
-                  .join(', ');
-              }}
-            >
-              {categoriesOptions.map((opt) => (
-                <MenuItem key={opt.id} value={opt.id}>
-                  {opt.label}
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-
-          {/* Контакты поставщика */}
+          {/* Контакты */}
           <Stack
             direction="row"
             alignItems="center"
             justifyContent="space-between"
             sx={{ mb: 1 }}
           >
-            <Typography variant="subtitle1">Контакты</Typography>
-            <Button startIcon={<AddIcon />} onClick={addContact}>
+            <Typography variant="subtitle2">Контакты</Typography>
+            <Button
+              size="small"
+              startIcon={<AddIcon fontSize="small" />}
+              onClick={addContact}
+            >
               Добавить контакт
             </Button>
           </Stack>
 
-          <Table size="small" sx={{ mb: 3 }}>
+          <Table size="small">
             <TableHead>
               <TableRow>
-                <TableCell>Контакт</TableCell>
-                <TableCell>Роль</TableCell>
+                <TableCell>ФИО</TableCell>
+                <TableCell>Должность / роль</TableCell>
                 <TableCell>Телефон</TableCell>
                 <TableCell>Email</TableCell>
                 <TableCell>Комментарий</TableCell>
-                <TableCell sx={{ width: 40 }} />
+                <TableCell width={40} />
               </TableRow>
             </TableHead>
             <TableBody>
@@ -348,75 +424,79 @@ export default function SupplierCreatePage() {
                   <TableCell>
                     <TextField
                       size="small"
+                      fullWidth
                       value={c.person_name}
                       onChange={(e) =>
                         setContacts((prev) =>
-                          prev.map((r, i) =>
-                            i === idx ? { ...r, person_name: e.target.value } : r
-                          )
+                          prev.map((row, i) =>
+                            i === idx ? { ...row, person_name: e.target.value } : row,
+                          ),
                         )
                       }
-                      placeholder="ФИО"
                     />
                   </TableCell>
                   <TableCell>
                     <TextField
                       size="small"
+                      fullWidth
                       value={c.position}
                       onChange={(e) =>
                         setContacts((prev) =>
-                          prev.map((r, i) =>
-                            i === idx ? { ...r, position: e.target.value } : r
-                          )
+                          prev.map((row, i) =>
+                            i === idx ? { ...row, position: e.target.value } : row,
+                          ),
                         )
                       }
-                      placeholder="Роль"
                     />
                   </TableCell>
                   <TableCell>
                     <TextField
                       size="small"
+                      fullWidth
                       value={c.phone}
                       onChange={(e) =>
                         setContacts((prev) =>
-                          prev.map((r, i) =>
-                            i === idx ? { ...r, phone: e.target.value } : r
-                          )
+                          prev.map((row, i) =>
+                            i === idx ? { ...row, phone: e.target.value } : row,
+                          ),
                         )
                       }
-                      placeholder="+7..."
                     />
                   </TableCell>
                   <TableCell>
                     <TextField
                       size="small"
+                      fullWidth
                       value={c.email}
                       onChange={(e) =>
                         setContacts((prev) =>
-                          prev.map((r, i) =>
-                            i === idx ? { ...r, email: e.target.value } : r
-                          )
+                          prev.map((row, i) =>
+                            i === idx ? { ...row, email: e.target.value } : row,
+                          ),
                         )
                       }
-                      placeholder="mail@..."
                     />
                   </TableCell>
                   <TableCell>
                     <TextField
                       size="small"
+                      fullWidth
                       value={c.comment}
                       onChange={(e) =>
                         setContacts((prev) =>
-                          prev.map((r, i) =>
-                            i === idx ? { ...r, comment: e.target.value } : r
-                          )
+                          prev.map((row, i) =>
+                            i === idx ? { ...row, comment: e.target.value } : row,
+                          ),
                         )
                       }
-                      placeholder="Как лучше связаться"
                     />
                   </TableCell>
-                  <TableCell>
-                    <IconButton onClick={() => delContact(idx)} size="small">
+                  <TableCell align="right">
+                    <IconButton
+                      size="small"
+                      onClick={() => delContact(idx)}
+                      disabled={contacts.length === 1}
+                    >
                       <DeleteIcon fontSize="small" />
                     </IconButton>
                   </TableCell>
@@ -425,61 +505,33 @@ export default function SupplierCreatePage() {
             </TableBody>
           </Table>
 
-          {/* Условия поставки / оплаты */}
-          <Typography variant="subtitle1" sx={{ mb: 1 }}>
-            Условия поставки / оплаты
-          </Typography>
+          {/* Заметки и кнопки */}
+          <TextField
+            label="Заметки"
+            size="small"
+            fullWidth
+            multiline
+            minRows={2}
+            sx={{ mt: 2, mb: 2 }}
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+          />
 
-          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ mb: 2, flexWrap: 'wrap' }}>
-            <TextField
-              size="small"
-              label="Условия оплаты"
-              value={terms.payment_terms}
-              onChange={(e) =>
-                setTerms((t) => ({ ...t, payment_terms: e.target.value }))
-              }
-              sx={{ flex: 1, minWidth: 240 }}
-            />
-            <TextField
-              size="small"
-              label="Мин. заказ"
-              value={terms.min_order_amount}
-              onChange={(e) =>
-                setTerms((t) => ({ ...t, min_order_amount: e.target.value }))
-              }
-              sx={{ flex: 1, minWidth: 160 }}
-            />
-            <TextField
-              size="small"
-              label="Срок поставки (дн.)"
-              type="number"
-              value={terms.lead_time_days}
-              onChange={(e) =>
-                setTerms((t) => ({ ...t, lead_time_days: e.target.value }))
-              }
-              sx={{ width: 160 }}
-            />
-          </Stack>
-
-          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ mb: 2, flexWrap: 'wrap' }}>
-            <TextField
-              size="small"
-              label="Регионы поставки"
-              value={terms.delivery_regions}
-              onChange={(e) =>
-                setTerms((t) => ({ ...t, delivery_regions: e.target.value }))
-              }
-              sx={{ flex: 1, minWidth: 240 }}
-            />
-            <TextField
-              size="small"
-              label="Доставка / логистика"
-              value={terms.delivery_notes}
-              onChange={(e) =>
-                setTerms((t) => ({ ...t, delivery_notes: e.target.value }))
-              }
-              sx={{ flex: 1, minWidth: 240 }}
-            />
+          <Stack direction="row" spacing={2} justifyContent="flex-end">
+            <Button
+              variant="outlined"
+              onClick={() => nav(fixPath('/suppliers'))}
+              disabled={saving}
+            >
+              Отмена
+            </Button>
+            <Button
+              variant="contained"
+              onClick={handleSave}
+              disabled={!canSave}
+            >
+              Сохранить
+            </Button>
           </Stack>
         </CardContent>
       </Card>
