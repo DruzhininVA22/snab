@@ -281,3 +281,121 @@ class PurchaseRequestWriteSerializer(serializers.ModelSerializer):
             PurchaseRequestLine.objects.filter(
                 id__in=[obj.id for obj in to_delete]
             ).delete()
+# ============================================================
+# Строки заявки (read‑only, если ещё нет)
+# ============================================================
+
+class PurchaseRequestLineSerializer(serializers.ModelSerializer):
+    """
+    DRF‑сериализатор строки заявки (read).
+
+    Поля (как в старом бэке):
+    - id
+    - request
+    - item
+    - item_sku (source=item.sku)
+    - item_name (source=item.name)
+    - qty
+    - unit
+    - need_date
+    - deadline_at
+    - status
+    - comment
+    - priority
+    - task
+    - created_at
+    - updated_at
+    """
+
+    item_sku = serializers.CharField(source="item.sku", read_only=True)
+    item_name = serializers.CharField(source="item.name", read_only=True)
+
+    class Meta:
+        model = PurchaseRequestLine
+        fields = [
+            "id",
+            "request",
+            "item",
+            "item_sku",
+            "item_name",
+            "qty",
+            "unit",
+            "need_date",
+            "deadline_at",
+            "status",
+            "comment",
+            "priority",
+            "task",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["created_at", "updated_at"]
+
+
+# ============================================================
+# Заказы поставщикам (PurchaseOrder + строки)
+# ============================================================
+
+class PurchaseOrderLineSerializer(serializers.ModelSerializer):
+    """
+    DRF‑сериализатор строки заказа поставщику.
+
+    Поля (как в старом бэке):
+    - id
+    - order
+    - item
+    - item_sku
+    - item_name
+    - qty
+    - price
+    - status
+    """
+
+    item_sku = serializers.CharField(source="item.sku", read_only=True)
+    item_name = serializers.CharField(source="item.name", read_only=True)
+
+    class Meta:
+        model = PurchaseOrderLine
+        fields = [
+            "id",
+            "order",
+            "item",
+            "item_sku",
+            "item_name",
+            "qty",
+            "price",
+            "status",
+        ]
+
+
+class PurchaseOrderSerializer(serializers.ModelSerializer):
+    """
+    DRF‑сериализатор заказа поставщику.
+
+    Поля (как в старом бэке):
+    - id
+    - number
+    - supplier
+    - supplier_name
+    - status
+    - lines
+    - created_at
+    - updated_at
+    """
+
+    lines = PurchaseOrderLineSerializer(many=True, read_only=True)
+    supplier_name = serializers.CharField(source="supplier.name", read_only=True)
+
+    class Meta:
+        model = PurchaseOrder
+        fields = [
+            "id",
+            "number",
+            "supplier",
+            "supplier_name",
+            "status",
+            "lines",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["created_at", "updated_at"]

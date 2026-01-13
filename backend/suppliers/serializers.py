@@ -179,8 +179,8 @@ class SupplierDetailSerializer(serializers.ModelSerializer):
             "rating",
             "is_active",
             "notes",
-            "categories",        # список id
-            "categories_short",  # готовая строка для UI
+            "categories",        # список id категорий
+            "categories_short",  # строка для UI
             "contacts",
             "terms",
             "pricelists",

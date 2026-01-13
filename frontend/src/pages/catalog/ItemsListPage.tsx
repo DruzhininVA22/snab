@@ -19,15 +19,16 @@ type Item = {
   sku?: string;
   name: string;
   unit: number;
-  unit_display?: { id:number, name:string } | null;
+  unit_name?: string;
   category?: string | number | null;
-  category_display?: { id:number, name:string } | null;
+  category_code?: string;
+  category_name?: string;
 };
 
 async function fetchUnits(): Promise<Unit[]> {
   const { data } = await http.get(fixPath('/api/units/'), { params: { page_size: 1000 } });
   const arr = Array.isArray((data as any)?.results) ? (data as any).results : (data as any);
-  return (arr || []).map((u:any)=> ({ id: u.id, name: u.name ?? String(u.id) }));
+  return (arr || []).map((u: any) => ({ id: u.id, name: u.name ?? String(u.id) }));
 }
 
 async function fetchItems(): Promise<Item[]> {
@@ -38,15 +39,15 @@ async function fetchItems(): Promise<Item[]> {
 
 function useUnits() {
   const [units, setUnits] = React.useState<Unit[]>([]);
-  React.useEffect(()=> { fetchUnits().then(setUnits).catch(()=> setUnits([])); }, []);
+  React.useEffect(() => { fetchUnits().then(setUnits).catch(() => setUnits([])); }, []);
   return units;
 }
 
-function ItemFormDialog({ open, onClose, initial, onSaved } : {
+function ItemFormDialog({ open, onClose, initial, onSaved }: {
   open: boolean;
-  onClose: ()=>void;
+  onClose: () => void;
   initial: Partial<Item> | null;
-  onSaved: (it: Item)=>void;
+  onSaved: (it: Item) => void;
 }) {
   const units = useUnits();
   const [saving, setSaving] = React.useState(false);
@@ -54,7 +55,7 @@ function ItemFormDialog({ open, onClose, initial, onSaved } : {
     initial || { name: '', sku: '', unit: units[0]?.id, category: null }
   );
 
-  React.useEffect(()=> {
+  React.useEffect(() => {
     setForm(initial || { name: '', sku: '', unit: units[0]?.id, category: null });
   }, [initial, units]);
 
@@ -94,15 +95,15 @@ function ItemFormDialog({ open, onClose, initial, onSaved } : {
           <TextField
             label="Наименование"
             value={form.name ?? ''}
-            onChange={(e)=> setField('name', e.target.value)}
+            onChange={(e) => setField('name', e.target.value)}
             fullWidth
             size="small"
           />
-          {'sku' in (initial||{}) || true ? (
+          {'sku' in (initial || {}) || true ? (
             <TextField
               label="Артикул (SKU)"
               value={form.sku ?? ''}
-              onChange={(e)=> setField('sku', e.target.value)}
+              onChange={(e) => setField('sku', e.target.value)}
               fullWidth
               size="small"
             />
@@ -113,7 +114,7 @@ function ItemFormDialog({ open, onClose, initial, onSaved } : {
               labelId="unit-label"
               label="Ед. изм."
               value={form.unit ?? ''}
-              onChange={(e)=> setField('unit', Number(e.target.value))}
+              onChange={(e) => setField('unit', Number(e.target.value))}
             >
               {units.map(u => <MenuItem key={u.id} value={u.id}>{u.name}</MenuItem>)}
             </Select>
@@ -122,7 +123,7 @@ function ItemFormDialog({ open, onClose, initial, onSaved } : {
           {/* Новый выбор категории: дерево H→S в отдельном диалоге с рекомендациями */}
           <CategoryTreeSelect
             value={form.category ? (typeof form.category === 'string' ? Number(form.category) : form.category) : null}
-            onChange={(id)=> setField('category', id)}
+            onChange={(id) => setField('category', id)}
             label="Категория (Sxx)"
           />
         </Stack>
@@ -145,10 +146,10 @@ export default function ItemsListPage() {
 
   const reload = React.useCallback(() => {
     setLoading(true);
-    fetchItems().then(setRows).finally(()=> setLoading(false));
+    fetchItems().then(setRows).finally(() => setLoading(false));
   }, []);
 
-  React.useEffect(()=> { reload(); }, [reload]);
+  React.useEffect(() => { reload(); }, [reload]);
 
   const onEdit = (it: Item) => { setEditing(it); setDlgOpen(true); };
   const onAdd = () => { setEditing(null); setDlgOpen(true); };
@@ -189,13 +190,22 @@ export default function ItemsListPage() {
             <TableBody>
               {rows.map(row => (
                 <TableRow key={row.id} hover>
+                  {/* ID */}
                   <TableCell>{row.id}</TableCell>
+                  {/* Артикул */}
                   <TableCell>{row.sku || ''}</TableCell>
+                  {/* Наименование */}
                   <TableCell>{row.name}</TableCell>
-                  <TableCell>{row.unit_display?.name || row.unit}</TableCell>
-                  <TableCell>{row.category_display?.name || row.category || ''}</TableCell>
+                  {/* Ед. изм. */}
+                  <TableCell>{row.unit_name || ''}</TableCell>
+                  {/* Категория */}
                   <TableCell>
-                    <IconButton size="small" onClick={()=> onEdit(row)}><EditIcon fontSize="small" /></IconButton>
+                    {row.category_code && row.category_name
+                      ? `${row.category_code} ${row.category_name}`
+                      : row.category_name || ''}
+                  </TableCell>
+                  <TableCell>
+                    <IconButton size="small" onClick={() => onEdit(row)}><EditIcon fontSize="small" /></IconButton>
                   </TableCell>
                 </TableRow>
               ))}
@@ -207,7 +217,7 @@ export default function ItemsListPage() {
 
       <ItemFormDialog
         open={dlgOpen}
-        onClose={()=> setDlgOpen(false)}
+        onClose={() => setDlgOpen(false)}
         initial={editing}
         onSaved={upsertLocal}
       />

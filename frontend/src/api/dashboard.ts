@@ -7,7 +7,7 @@
 import { http, fixPath } from './_http';
 
 export async function fetchOverviewMetrics() {
-  const url = fixPath('/api/procurement/metrics/overview/');
+  const url = fixPath('/api/procurement/metrics-overview/');
   const res = await http.get(url);
   return res.data;
 }

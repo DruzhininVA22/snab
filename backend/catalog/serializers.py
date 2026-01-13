@@ -19,12 +19,12 @@ class CategorySerializer(serializers.ModelSerializer):
     - excludes
     - borderline
     - parent
-    - parent_id ✅ ВАЖНО! Нужно для buildTree()
+    - parent_id  ВАЖНО! Нужно для buildTree()
     - is_leaf
     - level
     - path
     """
-    # ✅ ДОБАВЛЯЕМ parent_id как отдельное поле
+    # ДОБАВЛЯЕМ parent_id как отдельное поле
     parent_id = serializers.IntegerField(source='parent.id', read_only=True, allow_null=True)
     
     class Meta:
@@ -39,10 +39,11 @@ class ItemSerializer(serializers.ModelSerializer):
     """
     unit_name = serializers.CharField(source='unit.name', read_only=True)
     category_name = serializers.CharField(source='category.name', read_only=True)
+    category_code = serializers.CharField(source="category.code", read_only=True)
 
     class Meta:
         model = Item
-        fields = ['id', 'sku', 'name', 'description', 'unit', 'unit_name', 'category', 'category_name', 'created_at', 'updated_at']
+        fields = ['id', 'sku', 'name', 'description', 'unit', 'unit_name', 'category', 'category_code','category_name', 'created_at', 'updated_at']
         read_only_fields = ['created_at', 'updated_at']
 
 

@@ -6,6 +6,7 @@ API эндпоинты для работы с поставщиками.
 """
 
 from django.db.models import Q
+
 from rest_framework import permissions, viewsets
 from rest_framework.response import Response
 
@@ -22,11 +23,11 @@ class SupplierViewSet(viewsets.ModelViewSet):
     CRUD по поставщикам.
 
     Эндпоинты:
-    - GET    /api/suppliers/suppliers/       — список (страница SuppliersPage)
-    - GET    /api/suppliers/suppliers/{id}/  — детальная карточка
-    - POST   /api/suppliers/suppliers/       — создать
-    - PATCH  /api/suppliers/suppliers/{id}/  — частичное обновление
-    - PUT    /api/suppliers/suppliers/{id}/  — полное обновление
+    - GET /api/suppliers/suppliers/ — список (страница SuppliersPage)
+    - GET /api/suppliers/suppliers/{id}/ — детальная карточка
+    - POST /api/suppliers/suppliers/ — создать
+    - PATCH /api/suppliers/suppliers/{id}/ — частичное обновление
+    - PUT /api/suppliers/suppliers/{id}/ — полное обновление
     """
 
     permission_classes = [permissions.AllowAny]
@@ -49,12 +50,14 @@ class SupplierViewSet(viewsets.ModelViewSet):
         Базовый queryset поставщиков + фильтры.
 
         Поддерживаемые query‑параметры:
-        - ?search=...  — поиск по:
-            name, activity, inn, address,
-            terms.delivery_regions, terms.payment_terms
-        - ?status=...  — фильтр по полю Supplier.status
-                         (preferred / regular / blocked)
-        - ?region=...  — фильтр по terms.delivery_regions (icontains)
+        - ?search=... — поиск по:
+          name, activity, inn, address,
+          terms.delivery_regions, terms.payment_terms
+        - ?status=... — фильтр по полю Supplier.status
+          (preferred / regular / blocked)
+        - ?region=... — фильтр по terms.delivery_regions (icontains)
+        - ?categories=... — фильтр по категориям (может быть несколько раз)
+          ?categories=15&categories=16
         - ?ordering=... — сортировка, по умолчанию name
         """
         qs = (
@@ -91,6 +94,11 @@ class SupplierViewSet(viewsets.ModelViewSet):
             if r:
                 qs = qs.filter(terms__delivery_regions__icontains=r)
 
+        # ✅ Фильтр по категориям (множественный ?categories=15&categories=16)
+        category_ids = params.getlist("categories")
+        if category_ids:
+            qs = qs.filter(categories__id__in=category_ids).distinct()
+
         # Сортировка
         ordering = params.get("ordering") or "name"
         if ordering:
@@ -108,13 +116,12 @@ class SupplierViewSet(viewsets.ModelViewSet):
         """
         partial = kwargs.pop("partial", False)
         instance = self.get_object()
-
         in_serializer = SupplierWriteSerializer(
             instance, data=request.data, partial=partial
         )
+
         in_serializer.is_valid(raise_exception=True)
         supplier = in_serializer.save()
-
         out_serializer = SupplierDetailSerializer(supplier)
         return Response(out_serializer.data)
 

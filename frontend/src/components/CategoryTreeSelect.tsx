@@ -1,29 +1,85 @@
 /**
- * Выбор категории из дерева категорий.
+ * CategoryTreeSelect.tsx
  *
- * Компонент инкапсулирует:
- * - загрузку/представление дерева категорий,
- * - выбор узла и возврат выбранной категории наружу (onChange).
+ * Компонент для выбора категорий из иерархического дерева.
+ * Поддерживает режимы:
+ * - single: выбор одной категории (по умолчанию)
+ * - multiple: выбор нескольких категорий с чекбоксами
+ *
+ * Загружает данные из API и строит древовидную структуру на основе parent_id.
+ * ✅ ФИНАЛЬНАЯ ВЕРСИЯ: Верхний уровень НЕ выбирается!
  */
+
 import * as React from 'react';
+
 import {
-    Dialog, DialogTitle, DialogContent, DialogActions, Button,
-    Box, TextField, List, ListItemButton, ListItemText, Collapse,
-    LinearProgress, Typography, Divider, Chip
+    Dialog,
+    DialogTitle,
+    DialogContent,
+    DialogActions,
+    Button,
+    Box,
+    TextField,
+    List,
+    ListItemButton,
+    ListItemText,
+    Collapse,
+    LinearProgress,
+    Typography,
+    Divider,
+    Checkbox,
 } from '@mui/material';
+
 import { ExpandLess, ExpandMore } from '@mui/icons-material';
+
 import { http, fixPath } from '../api/_http';
 
+// ============================================================
+// ТИПЫ ДАННЫХ
+// ============================================================
+
+/**
+ * Тип категории, соответствующий структуре API
+ * - id: уникальный идентификатор
+ * - code: код категории (H00, H01, S01, S02 и т.д.)
+ * - name: название категории
+ * - parent_id: ID родительской категории (null если это корневая категория)
+ * - includes/excludes/borderline: дополнительные описания
+ */
 type Cat = {
     id: number;
     code: string;
     name: string;
-    parent?: { id: number; code: string; name: string } | null;
+    parent_id: number | null;
     includes?: string;
     excludes?: string;
-    borderline?: string; // если на бэке уже добавили поле
+    borderline?: string;
 };
 
+/**
+ * Props компонента CategoryTreeSelect
+ * - multiple?: boolean - режим выбора (false = одна, true = несколько)
+ * - value: number | null | number[] - выбранное значение
+ * - onChange: функция-коллбэк при изменении выбора
+ * - label?: string - подпись текстового поля
+ */
+type CategoryTreeSelectProps = {
+    multiple?: boolean;
+    value: number | null | number[];
+    onChange: (value: number | null | number[]) => void;
+    label?: string;
+};
+
+// ============================================================
+// ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+// ============================================================
+
+/**
+ * Разбирает строку excludes на основную часть и примечание о пограничных случаях.
+ * Пример: "отделка(H07), инженерия(H06); пограничное: каркас/плиты→изоляции"
+ * -> excludes: "отделка(H07), инженерия(H06)"
+ * -> notes: "каркас/плиты→изоляции"
+ */
 function splitExcludes(excludes?: string) {
     const src = (excludes || '').trim();
     if (!src) return { excludes: '', notes: '' };
@@ -34,222 +90,445 @@ function splitExcludes(excludes?: string) {
     return { excludes: before, notes: after };
 }
 
+// ============================================================
+// КОМПОНЕНТ: ДЕРЕВО КАТЕГОРИЙ (вспомогательный)
+// ============================================================
+
+/**
+ * FamiliesTree — отрисовка иерархического дерева категорий.
+ * Рекурсивно рендерит узлы и управляет их состоянием (открыт/закрыт).
+ *
+ * ✅ ВАЖНО: Верхний уровень (корневые категории) НЕ выбирается,
+ *          выбираются только листовые элементы (без детей).
+ */
 function FamiliesTree({
-    items, openMap, onToggle, onPick, selectedId,
+    items,
+    openMap,
+    onToggle,
+    onPick,
+    onMultiToggle,
+    selectedId,
+    selectedIds,
+    multiple,
+    onHover,
 }: {
     items: Cat[];
     openMap: Record<number, boolean>;
     onToggle: (id: number) => void;
     onPick: (id: number) => void;
+    onMultiToggle?: (id: number) => void;
     selectedId: number | null;
+    selectedIds?: Set<number>;
+    multiple?: boolean;
+    onHover?: (cat: Cat | null) => void;
 }) {
+    // ---------- Построение иерархии ----------
     const byId: Record<number, any> = {};
     const roots: any[] = [];
-    items.forEach((it) => (byId[it.id] = { ...it, children: [] }));
+
+    items.forEach((it) => (byId[it.id] = { ...it, children: [] as any[] }));
     items.forEach((it) => {
-        const pid = (it as any).parent?.id ?? null;
-        if (pid && byId[pid]) byId[pid].children.push(byId[it.id]);
-        else roots.push(byId[it.id]);
+        const pid = it.parent_id;
+        if (pid && byId[pid]) {
+            byId[pid].children.push(byId[it.id]);
+        } else {
+            roots.push(byId[it.id]);
+        }
     });
-    const hRoots = roots.filter((n) => String(n.code || '').startsWith('H'));
+
+    // ---------- Сортировка по коду ----------
+    const naturalSort = (a: string, b: string) =>
+        a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
+
     const sortRec = (arr: any[]) => {
-        arr.sort((a: any, b: any) => (a.code || '').localeCompare(b.code || ''));
+        arr.sort((a: any, b: any) => naturalSort(a.code || '', b.code || ''));
         arr.forEach((n) => sortRec(n.children));
     };
-    sortRec(hRoots);
 
-    const renderNode = (node: any, depth = 0) => {
+    sortRec(roots);
+
+    // ---------- Рендер одного узла ----------
+    const renderNode = (node: any, depth = 0, isRoot = false): React.ReactNode => {
         const hasChildren = (node.children || []).length > 0;
+        const isSelected = multiple ? selectedIds?.has(node.id) : selectedId === node.id;
+        const isOpen = !!openMap[node.id];
+
+        // Верхний уровень и узлы с детьми не выбираются (только листовые)
+        const isSelectable = !isRoot && !hasChildren;
+
+        const handleClick = () => {
+            // Корневой узел — только раскрытие/закрытие
+            if (isRoot) {
+                onToggle(node.id);
+                return;
+            }
+
+            if (multiple) {
+                if (isSelectable) {
+                    onMultiToggle?.(node.id);
+                } else if (hasChildren && !isOpen) {
+                    onToggle(node.id);
+                }
+            } else {
+                if (hasChildren) {
+                    onToggle(node.id);
+                } else {
+                    onPick(node.id);
+                }
+            }
+        };
+
         return (
             <React.Fragment key={node.id}>
                 <ListItemButton
-                    onClick={() => (hasChildren ? onToggle(node.id) : onPick(node.id))}
-                    sx={{ pl: 2 + depth * 2 }}
-                    selected={selectedId === node.id}
+                    onClick={handleClick}
+                    onMouseEnter={() => {
+                        if (onHover) onHover(node as Cat);
+                    }}
+                    onMouseLeave={() => {
+                        if (onHover) onHover(null);
+                    }}
+                    sx={{
+                        pl: 2 + depth * 2,
+                        py: 0.5,
+                        backgroundColor: isRoot ? 'action.hover' : 'transparent',
+                        fontWeight: isRoot ? 600 : 400,
+                        '&:hover': {
+                            backgroundColor: isRoot ? 'action.selected' : 'action.hover',
+                        },
+                    }}
+                    selected={isSelectable && !!isSelected}
                 >
-                    {hasChildren ? (openMap[node.id] ? <ExpandLess /> : <ExpandMore />) : <span style={{ width: 24 }} />}
-                    <ListItemText primary={`${node.code} — ${node.name}`} />
+                    {/* Иконка раскрытия / пустое место под неё */}
+                    {hasChildren ? (
+                        <Box
+                            sx={{ display: 'flex', alignItems: 'center', mr: 1 }}
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                onToggle(node.id);
+                            }}
+                        >
+                            {isOpen ? <ExpandLess fontSize="small" /> : <ExpandMore fontSize="small" />}
+                        </Box>
+                    ) : (
+                        <Box sx={{ width: 24, mr: 1 }} />
+                    )}
+
+                    {/* Чекбокс только для листьев в multiple-режиме */}
+                    {multiple && isSelectable && (
+                        <Checkbox
+                            checked={!!isSelected}
+                            onChange={(e) => {
+                                e.stopPropagation();
+                                onMultiToggle?.(node.id);
+                            }}
+                            size="small"
+                            sx={{ mr: 1, ml: -0.5 }}
+                            onClick={(e) => e.stopPropagation()}
+                        />
+                    )}
+
+                    {/* Текст узла: код + имя */}
+                    <ListItemText
+                        primary={
+                            <Typography variant="body2">
+                                {node.code ? `${node.code} ${node.name}` : node.name}
+                            </Typography>
+                        }
+                    />
                 </ListItemButton>
+
+                {/* Дети узла */}
                 {hasChildren && (
-                    <Collapse in={!!openMap[node.id]} timeout="auto" unmountOnExit>
-                        <List disablePadding>{node.children.map((ch: any) => renderNode(ch, depth + 1))}</List>
+                    <Collapse in={isOpen} timeout="auto" unmountOnExit>
+                        <List disablePadding>
+                            {node.children.map((ch: any) => renderNode(ch, depth + 1, false))}
+                        </List>
                     </Collapse>
                 )}
             </React.Fragment>
         );
     };
 
-    return <List dense>{hRoots.map((n) => renderNode(n))}</List>;
+    return <List disablePadding>{roots.map((node) => renderNode(node, 0, true))}</List>;
 }
 
-export default function CategoryTreeSelect({
-    value, onChange, disabled, label,
-}: {
-    value: number | null;
-    onChange: (id: number | null) => void;
-    disabled?: boolean;
-    label?: string;
-}) {
-    const [open, setOpen] = React.useState(false);
-    const [loading, setLoading] = React.useState(false);
-    const [items, setItems] = React.useState<Cat[]>([]);
-    const [treeOpen, setTreeOpen] = React.useState<Record<number, boolean>>({});
-    const [filter, setFilter] = React.useState('');
-    const [picked, setPicked] = React.useState<number | null>(value ?? null);
+// ============================================================
+// ГЛАВНЫЙ КОМПОНЕНТ: CategoryTreeSelect
+// ============================================================
 
-    const selected = React.useMemo(
-        () => items.find((i) => i.id === picked) || null,
-        [picked, items],
+/**
+ * CategoryTreeSelect — модальное окно выбора категории/категорий.
+ * Слева: дерево, справа: справка по категории.
+ */
+export default function CategoryTreeSelect(props: CategoryTreeSelectProps) {
+    const { value, onChange, multiple = false, label = 'Категория' } = props;
+
+    /** Открыто ли диалоговое окно выбора */
+    const [open, setOpen] = React.useState(false);
+    /** Флаг загрузки категорий */
+    const [loading, setLoading] = React.useState(false);
+    /** Список всех категорий */
+    const [items, setItems] = React.useState<Cat[]>([]);
+    /** Карта раскрытых узлов дерева */
+    const [openMap, setOpenMap] = React.useState<Record<number, boolean>>({});
+    /** Текущая категория для показа справки (по наведению/клику) */
+    const [info, setInfo] = React.useState<Cat | null>(null);
+
+    /** Выбранная категория в single-режиме */
+    const [selectedIdSingle, setSelectedIdSingle] = React.useState<number | null>(
+        (Array.isArray(value) ? null : value) || null,
     );
 
-    const loadAll = React.useCallback(async () => {
-        setLoading(true);
-        try {
-            const { data } = await http.get(fixPath('/api/catalog/categories/'), { params: { page_size: 2000 } });
-            const arr = Array.isArray((data as any)?.results) ? (data as any).results : (data as any);
-            setItems(arr || []);
-            const sel = (arr || []).find((x: any) => x.id === picked);
-            if (sel && sel.parent?.id) {
-                setTreeOpen((prev) => ({ ...prev, [sel.parent.id]: true }));
-            }
-        } finally {
-            setLoading(false);
-        }
-    }, [picked]);
+    /** Набор выбранных категорий в multiple-режиме */
+    const [selectedIdsMultiple, setSelectedIdsMultiple] = React.useState<Set<number>>(
+        new Set(Array.isArray(value) ? value : []),
+    );
 
+    // ---------- Загрузка данных из API ----------
     React.useEffect(() => {
-        if (open) loadAll();
-    }, [open, loadAll]);
+        (async () => {
+            setLoading(true);
+            try {
+                const url = fixPath('/api/catalog/categories/?page_size=2000');
+                const { data } = await http.get(url);
+                const arr = Array.isArray(data?.results) ? data.results : data;
+                const cats: Cat[] = (arr || []).map((c: any) => ({
+                    id: c.id,
+                    code: c.code,
+                    name: c.name,
+                    parent_id: c.parent_id || null,
+                    includes: c.includes,
+                    excludes: c.excludes,
+                    borderline: c.borderline,
+                }));
+                setItems(cats);
+            } catch (error) {
+                console.error('Ошибка загрузки категорий:', error);
+            } finally {
+                setLoading(false);
+            }
+        })();
+    }, []);
 
-    const openDialog = () => {
-        if (!disabled) setOpen(true);
-    };
-    const closeDialog = () => setOpen(false);
+    // ---------- Синхронизация снаружи (value) ----------
+    React.useEffect(() => {
+        if (multiple) {
+            setSelectedIdsMultiple(new Set(Array.isArray(value) ? value : []));
+        } else {
+            setSelectedIdSingle((Array.isArray(value) ? null : value) || null);
+        }
+    }, [value, multiple]);
 
-    const onToggle = (id: number) => setTreeOpen((prev) => ({ ...prev, [id]: !prev[id] }));
-    const onPick = (id: number) => {
-        const node = items.find((i) => i.id === id);
-        if (node && String(node.code || '').startsWith('S')) {
-            setPicked(id);
-        } else if (node && String(node.code || '').startsWith('H')) {
-            onToggle(id);
+    // ---------- Обработчики диалога ----------
+    const handleOpen = () => {
+        setOpen(true);
+
+        // В multiple-режиме раскрываем родительские узлы
+        if (multiple && items.length > 0) {
+            const allIds: Record<number, boolean> = {};
+            items.forEach((item) => {
+                if (item.parent_id) {
+                    allIds[item.parent_id] = true;
+                }
+            });
+            setOpenMap(allIds);
+        }
+
+        if (typeof window !== 'undefined') {
+            window.dispatchEvent(
+                new CustomEvent('categoryFilterChange', {
+                    detail: {
+                        selectedCategories: Array.isArray(value) ? value : value ? [value] : [],
+                    },
+                }),
+            );
         }
     };
 
-    const labelValue = React.useMemo(() => {
-        const v = items.find((i) => i.id === value) || null;
-        return v ? `${v.code} — ${v.name}` : '';
-    }, [items, value]);
+    const handleClose = () => {
+        setOpen(false);
+        setInfo(null);
+        if (typeof window !== 'undefined') {
+            window.dispatchEvent(
+                new CustomEvent('categoryFilterChange', {
+                    detail: {
+                        selectedCategories: Array.isArray(value) ? value : value ? [value] : [],
+                    },
+                }),
+            );
+        }
+    };
 
-    const filtered = React.useMemo(() => {
-        const q = filter.trim().toLowerCase();
-        if (!q) return items;
-        return items.filter((it) =>
-            (`${it.code} ${it.name} ${it.includes || ''} ${it.excludes || ''} ${it.borderline || ''}`)
-                .toLowerCase()
-                .includes(q),
-        );
-    }, [items, filter]);
+    // ---------- Обработчики дерева ----------
+    const handleToggle = (id: number) => {
+        setOpenMap((prev) => ({ ...prev, [id]: !prev[id] }));
+    };
 
-    // показываем «пограничные» из отдельного поля, если есть — иначе берём из excludes по маркеру
-    const exclNotes =
-        selected?.borderline != null
-            ? { excludes: selected?.excludes || '', notes: selected.borderline || '' }
-            : splitExcludes(selected?.excludes);
+    const handlePickSingle = (id: number) => {
+        const selected = items.find((it) => it.id === id) || null;
+        setSelectedIdSingle(id);
+        setInfo(selected);
+        onChange(selected ? id : null);
+        setOpen(false);
+    };
 
+    const handleMultiToggle = (id: number) => {
+        setSelectedIdsMultiple((prev) => {
+            const next = new Set(prev);
+            if (next.has(id)) {
+                next.delete(id);
+            } else {
+                next.add(id);
+            }
+            onChange(Array.from(next));
+            return next;
+        });
+    };
+
+    /**
+     * Обновление справочной панели при наведении на категорию
+     */
+    const handleItemInfo = (cat: Cat | null) => {
+        setInfo(cat);
+    };
+
+    // ---------- Текст в поле выбора ----------
+    const currentLabel = React.useMemo(() => {
+        if (multiple) {
+            const selected = items.filter((c) => selectedIdsMultiple.has(c.id));
+            const sorted = selected.sort((a, b) =>
+                (a.code || '').localeCompare(b.code || '', undefined, {
+                    numeric: true,
+                    sensitivity: 'base',
+                }),
+            );
+            return sorted.map((c) => `${c.code} ${c.name}`).join('; ') || '';
+        } else {
+            if (!selectedIdSingle || !items.length) return '';
+            const cat = items.find((c) => c.id === selectedIdSingle);
+            return cat ? `${cat.code} ${cat.name}` : '';
+        }
+    }, [selectedIdSingle, selectedIdsMultiple, items, multiple]);
+
+    // ============================================================
+    // РЕНДЕР КОМПОНЕНТА
+    // ============================================================
     return (
         <>
+            {/* Поле, которое открывает диалог выбора категорий */}
             <TextField
-                label={label || 'Категория'}
-                value={labelValue}
-                onClick={openDialog}
                 fullWidth
                 size="small"
-                InputProps={{ readOnly: true }}
-                disabled={disabled}
-                placeholder="Выберите категорию…"
+                label={label}
+                value={currentLabel}
+                onClick={handleOpen}
+                InputProps={{
+                    readOnly: true,
+                }}
             />
-            <Dialog open={open} onClose={closeDialog} maxWidth="md" fullWidth>
-                <DialogTitle>Выбор категории</DialogTitle>
-                <DialogContent dividers sx={{ p: 0 }}>
-                    {loading && <LinearProgress />}
-                    <Box sx={{ display: 'flex', gap: 2, p: 2, minHeight: 420 }}>
-                        {/* Лево: дерево + фильтр */}
-                        <Box sx={{ width: 420, borderRight: '1px solid rgba(0,0,0,0.1)', pr: 2, mr: 1 }}>
-                            <TextField
-                                size="small"
-                                fullWidth
-                                label="Фильтр (код/название/подсказки)"
-                                value={filter}
-                                onChange={(e) => setFilter(e.target.value)}
-                                sx={{ mb: 1 }}
-                            />
-                            <FamiliesTree
-                                items={filtered}
-                                openMap={treeOpen}
-                                onToggle={onToggle}
-                                onPick={onPick}
-                                selectedId={picked}
-                            />
-                        </Box>
 
-                        {/* Право: рекомендации */}
-                        <Box sx={{ flex: 1 }}>
-                            <Typography variant="subtitle1" sx={{ mb: 1 }}>
-                                Рекомендации{' '}
-                                {selected ? (
-                                    <Chip size="small" label={`${selected.code} — ${selected.name}`} sx={{ ml: 1 }} />
-                                ) : null}
-                            </Typography>
+            {/* Диалог выбора категорий */}
+            <Dialog open={open} onClose={handleClose} maxWidth="md" fullWidth>
+                <DialogTitle>
+                    {multiple ? 'Выбор категорий (несколько)' : 'Выбор категории (одна)'}
+                </DialogTitle>
+                <DialogContent dividers>
+                    {loading && <LinearProgress sx={{ mb: 2 }} />}
 
-                            {!selected ? (
-                                <Typography color="text.secondary">
-                                    Выберите раздел (лист Sxx) слева, чтобы увидеть рекомендации.
+                    {!loading && items.length > 0 && (
+                        <Box sx={{ display: 'flex', gap: 2 }}>
+                            {/* ЛЕВАЯ ЧАСТЬ: дерево категорий */}
+                            <Box sx={{ flex: 2, minWidth: 0 }}>
+                                <FamiliesTree
+                                    items={items}
+                                    openMap={openMap}
+                                    onToggle={handleToggle}
+                                    onPick={handlePickSingle}
+                                    onMultiToggle={handleMultiToggle}
+                                    selectedId={selectedIdSingle}
+                                    selectedIds={selectedIdsMultiple}
+                                    multiple={multiple}
+                                    onHover={handleItemInfo}
+                                />
+                            </Box>
+
+                            {/* ПРАВАЯ ЧАСТЬ: 4 поля справки по категории */}
+                            <Box sx={{ flex: 3, minWidth: 0 }}>
+                                <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                                    Справка по категории
                                 </Typography>
-                            ) : (
-                                <Box sx={{ display: 'grid', gridTemplateColumns: '1fr', gap: 1.5 }}>
-                                    <Box>
-                                        <Typography variant="body2" sx={{ fontWeight: 600, mb: 0.5 }}>
-                                            Что должно входить
-                                        </Typography>
-                                        <Typography variant="body2" color="text.secondary">
-                                            {selected.includes || '—'}
-                                        </Typography>
-                                    </Box>
-                                    <Divider />
-                                    <Box>
-                                        <Typography variant="body2" sx={{ fontWeight: 600, mb: 0.5 }}>
-                                            Что не должно входить
-                                        </Typography>
-                                        <Typography variant="body2" color="text.secondary">
-                                            {exclNotes.excludes || '—'}
-                                        </Typography>
-                                    </Box>
-                                    <Divider />
-                                    <Box>
-                                        <Typography variant="body2" sx={{ fontWeight: 600, mb: 0.5 }}>
-                                            Пограничные значения
-                                        </Typography>
-                                        <Typography variant="body2" color="text.secondary">
-                                            {exclNotes.notes || '—'}
-                                        </Typography>
-                                    </Box>
+                                <Divider sx={{ mb: 1 }} />
+
+                                {/* Описание */}
+                                <Box sx={{ mb: 1.5 }}>
+                                    <Typography
+                                        variant="subtitle2"
+                                        sx={{ fontWeight: 700, textTransform: 'uppercase', mb: 0.5 }}
+                                    >
+                                        Описание
+                                    </Typography>
+                                    <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
+                                        {info ? `${info.code} — ${info.name}` : 'Наведите курсор на категорию'}
+                                    </Typography>
                                 </Box>
-                            )}
+
+                                {/* Что входит */}
+                                <Box sx={{ mb: 1.5 }}>
+                                    <Typography
+                                        variant="subtitle2"
+                                        sx={{ fontWeight: 700, textTransform: 'uppercase', mb: 0.5 }}
+                                    >
+                                        Что входит
+                                    </Typography>
+                                    <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
+                                        {info?.includes || '—'}
+                                    </Typography>
+                                </Box>
+
+                                {/* Что не входит */}
+                                <Box sx={{ mb: 1.5 }}>
+                                    <Typography
+                                        variant="subtitle2"
+                                        sx={{ fontWeight: 700, textTransform: 'uppercase', mb: 0.5 }}
+                                    >
+                                        Что не входит
+                                    </Typography>
+                                    <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
+                                        {info?.excludes ? splitExcludes(info.excludes).excludes : '—'}
+                                    </Typography>
+                                </Box>
+
+                                {/* Пограничные случаи */}
+                                <Box sx={{ mb: 1.5 }}>
+                                    <Typography
+                                        variant="subtitle2"
+                                        sx={{ fontWeight: 700, textTransform: 'uppercase', mb: 0.5 }}
+                                    >
+                                        Пограничные случаи
+                                    </Typography>
+                                    <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
+                                        {info?.borderline ||
+                                            (info?.excludes && splitExcludes(info.excludes).notes) ||
+                                            '—'}
+                                    </Typography>
+                                </Box>
+                            </Box>
                         </Box>
-                    </Box>
+                    )}
+
+                    {!loading && items.length === 0 && (
+                        <Typography color="text.secondary">Категории не загрузились</Typography>
+                    )}
                 </DialogContent>
                 <DialogActions>
-                    <Button onClick={closeDialog}>Отмена</Button>
                     <Button
-                        onClick={() => {
-                            onChange(picked);
-                            closeDialog();
-                        }}
-                        disabled={!picked}
+                        onClick={handleClose}
                         variant="contained"
+                        color="primary"
+                        sx={{ fontWeight: 600 }}
                     >
-                        Выбрать
+                        ✓ Закрыть
                     </Button>
                 </DialogActions>
             </Dialog>
