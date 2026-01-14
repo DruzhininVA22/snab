@@ -11,8 +11,8 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
-from .models import Category
-from .serializers import CategorySerializer, CategoryTreeSerializer
+from .models import Category, Item
+from .serializers import CategorySerializer, CategoryTreeSerializer, ItemSerializer
 
 
 @api_view(["GET"])
@@ -92,5 +92,43 @@ class CategoryViewSet(viewsets.ModelViewSet):
         code_prefix = qp.get("code_prefix")
         if code_prefix:
             qs = qs.filter(code__istartswith=code_prefix)
+
+        return qs
+
+class ItemViewSet(viewsets.ModelViewSet):
+    """
+    ItemViewSet — REST‑endpoint SNAB.
+    CRUD по номенклатуре.
+    """
+
+    serializer_class = ItemSerializer
+    permission_classes = [IsAuthenticated]
+
+    queryset = Item.objects.all().select_related("unit", "category").order_by("sku")
+
+    def get_queryset(self):
+        """
+        Поддержка фильтров по query‑параметрам:
+        - category (id категории)
+        - search / q (поиск по имени/sku)
+        """
+        qs = super().get_queryset()
+        params = getattr(self.request, "query_params", {})
+
+        cat = params.get("category")
+        if cat not in (None, "", "null", "undefined"):
+            try:
+                catval = int(cat)
+                qs = qs.filter(category_id=catval)
+            except (TypeError, ValueError):
+                pass
+
+        search = params.get("search") or params.get("q")
+        if search:
+            s = search.strip()
+            if s:
+                from django.db.models import Q
+
+                qs = qs.filter(Q(name__icontains=s) | Q(sku__icontains=s))
 
         return qs

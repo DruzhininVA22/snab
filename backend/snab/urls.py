@@ -48,9 +48,6 @@ urlpatterns = [
     # CSRF‑endpoint для фронтенда (забирает/ставит csrftoken cookie)
     path("api/auth/csrf/", csrf_view),
 
-    # Базовые справочники ядра: /api/units/, /api/items/
-    path("api/", include(router.urls)),
-
     # Поставщики и всё, что к ним относится (CRUD, прайсы и т.п.)
     path("api/suppliers/", include("suppliers.urls")),
 
@@ -59,4 +56,7 @@ urlpatterns = [
     path("api/projects/", include("projects.urls")),
     path("api/catalog/", include("catalog.urls")),
     path("api/warehouse/", include("warehouse.urls")),
+
+    # Базовые справочники ядра: /api/units/, /api/items/
+    path("api/", include(router.urls)),
 ]

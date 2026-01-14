@@ -20,6 +20,15 @@ class Project(models.Model):
     status = models.CharField("Статус", max_length=20, choices=Status.choices, default=Status.PLANNED)
     description = models.TextField("Описание", blank=True, default="")
     
+    template = models.ForeignKey(
+        "projects.StageTemplate",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='projects',
+        verbose_name='Шаблон стадий',
+    )
+
     start_date = models.DateField("Дата старта", null=True, blank=True)
     end_date = models.DateField("Дата окончания", null=True, blank=True)
     

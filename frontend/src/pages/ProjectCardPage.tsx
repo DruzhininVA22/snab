@@ -6,7 +6,7 @@
  */
 import * as React from 'react';
 import { useParams } from 'react-router-dom';
-import { Box, Paper, Typography, Stack, TextField, Button, Divider, Alert, IconButton } from '@mui/material';
+import { Box, Paper, Typography, Stack, TextField, Button, Divider, Alert, IconButton, MenuItem, } from '@mui/material';
 import DeleteIcon from '@mui/icons-material/Delete';
 import SaveIcon from '@mui/icons-material/Save';
 import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
@@ -15,9 +15,13 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   fetchProject,
   fetchProjectStages,
+  updateProject,
   createStageWithFallback,
+  applyTemplateToProject,
+  fetchStageTemplates,
   type Project,
   type ProjectStage,
+  type StageTemplate,
 } from '../api/projects';
 import { updateStage, deleteStage, reorderProjectStages } from '../api/projects.extra';
 
@@ -94,16 +98,101 @@ export default function ProjectCardPage() {
     reorderMut.mutate(ids);
   };
 
+  const [editName, setEditName] = React.useState('');
+  const [editCode, setEditCode] = React.useState('');
+  const [editStatus, setEditStatus] = React.useState('');
+
+  React.useEffect(() => {
+    if (project) {
+      setEditName(project.name || '');
+      setEditCode(project.code || '');
+      setEditStatus(project.status || '');
+    }
+  }, [project]);
+
+  const saveProjectMut = useMutation({
+    mutationFn: (payload: Partial<Project>) => updateProject(projectId, payload),
+    onSuccess: (data: Project) => {
+      qc.setQueryData(['project', projectId], data);
+    },
+  });
+
+  const [templates, setTemplates] = React.useState<StageTemplate[]>([]);
+  const [tplId, setTplId] = React.useState<number | ''>('');
+
+  React.useEffect(() => {
+    if (stages.length === 0) {
+      fetchStageTemplates().then(setTemplates).catch(() => setTemplates([]));
+    }
+  }, [stages.length]);
+
+  const applyTplMut = useMutation({
+    mutationFn: (templateId: number) =>
+      applyTemplateToProject(projectId, {
+        template_id: templateId,
+        replace: true,
+        renumber_from: 1,
+      }),
+    onSuccess: (data: any) => {
+      const newStages = Array.isArray(data) ? data : data?.stages;
+      qc.setQueryData(['project-stages', projectId], newStages || []);
+    },
+  });
+
   return (
     <Box sx={{ p: 2 }}>
-      <Typography variant="h5" sx={{ mb: 1 }}>Проект #{projectId}</Typography>
+      <Typography variant="h5" gutterBottom>
+        Проект #{projectId}
+      </Typography>
+
       {project && (
-        <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
-          <Typography variant="subtitle1">{project.name} <Typography component="span" color="text.secondary">({project.code})</Typography></Typography>
-          <Typography variant="body2" color="text.secondary">Статус: {project.status || '—'}</Typography>
+        <Paper sx={{ p: 2, mb: 3 }}>
+          <Stack spacing={2}>
+            <TextField
+              label="Название"
+              value={editName}
+              onChange={(e) => setEditName(e.target.value)}
+              fullWidth
+            />
+            <TextField
+              label="Код"
+              value={editCode}
+              onChange={(e) => setEditCode(e.target.value)}
+              sx={{ maxWidth: 240 }}
+            />
+            <TextField
+              label="Статус"
+              value={editStatus}
+              onChange={(e) => setEditStatus(e.target.value)}
+              sx={{ maxWidth: 240 }}
+            />
+
+            <Stack direction="row" spacing={2}>
+              <Button
+                variant="contained"
+                startIcon={<SaveIcon />}
+                onClick={() =>
+                  saveProjectMut.mutate({
+                    name: editName,
+                    code: editCode,
+                    status: editStatus,
+                  })
+                }
+                disabled={saveProjectMut.isLoading}
+              >
+                Сохранить проект
+              </Button>
+            </Stack>
+
+            {saveProjectMut.isError && (
+              <Alert severity="error">Не удалось сохранить проект</Alert>
+            )}
+            {saveProjectMut.isSuccess && (
+              <Alert severity="success">Сохранено</Alert>
+            )}
+          </Stack>
         </Paper>
       )}
-
       <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
         <Typography variant="subtitle1" sx={{ mb: 1 }}>Этапы</Typography>
 
@@ -147,8 +236,44 @@ export default function ProjectCardPage() {
             </Box>
           ))}
           {stages.length === 0 && (
-            <Typography variant="body2" color="text.secondary">Этапов пока нет.</Typography>
+            <Box sx={{ mt: 2 }}>
+              <Alert severity="info" sx={{ mb: 2 }}>
+                Этапов пока нет.
+              </Alert>
+
+              <Stack direction="row" spacing={2} alignItems="center">
+                <TextField
+                  select
+                  label="Шаблон этапов"
+                  size="small"
+                  sx={{ minWidth: 260 }}
+                  value={tplId}
+                  onChange={(e) => setTplId(Number(e.target.value) || '')}
+                >
+                  {templates.map(t => (
+                    <MenuItem key={t.id} value={t.id}>
+                      {t.name}
+                    </MenuItem>
+                  ))}
+                </TextField>
+
+                <Button
+                  variant="contained"
+                  disabled={!tplId || applyTplMut.isLoading}
+                  onClick={() => tplId && applyTplMut.mutate(Number(tplId))}
+                >
+                  Заполнить из шаблона
+                </Button>
+              </Stack>
+
+              {applyTplMut.isError && (
+                <Alert severity="error" sx={{ mt: 1 }}>
+                  Не удалось применить шаблон
+                </Alert>
+              )}
+            </Box>
           )}
+
         </Stack>
 
         <Divider sx={{ my: 1.5 }} />

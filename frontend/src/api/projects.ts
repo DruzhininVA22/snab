@@ -58,6 +58,17 @@ export async function fetchProjects(params?: ProjectListParams): Promise<Project
   return unpage<Project[]>(data);
 }
 
+export async function updateProject(
+  projectId: number,
+  payload: Partial<Project>,
+): Promise<Project> {
+  const res = await http.patch(
+    fixPath(`/api/projects/projects/${projectId}/`),
+    payload,
+  );
+  return res.data ?? res;
+}
+
 export type CreateProjectPayload = { code: string; name: string; template?: number | null };
 export async function createProject(payload: CreateProjectPayload): Promise<Project> {
   const { data } = await http.post(fixPath('/api/projects/projects/'), payload);

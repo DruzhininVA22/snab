@@ -101,3 +101,13 @@ class ProjectDetailSerializer(serializers.ModelSerializer):
         model = Project
         fields = ['id', 'code', 'name', 'status', 'description', 'start_date', 'end_date', 'stages', 'tasks', 'created_at', 'updated_at']
         read_only_fields = ['created_at', 'updated_at']
+
+class ProjectSerializer(serializers.ModelSerializer):
+    """
+    Простой сериализатор для списка проектов (используется ProjectListLiteView).
+    Поля совпадают с ProjectListSerializer, чтобы не ломать фронт.
+    """
+
+    class Meta:
+        model = Project
+        fields = ["id", "code", "name", "status", "start_date", "end_date", "description"]

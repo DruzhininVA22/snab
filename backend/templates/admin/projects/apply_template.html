@@ -1,0 +1,16 @@
+{% extends "admin/base_site.html" %}
+{% load static %}
+
+{% block content %}
+  <h1>{{ title }}</h1>
+
+  <p>Выбрано проектов: {{ projects|length }}</p>
+
+  <form method="post">
+    {% csrf_token %}
+    <table>
+      {{ form.as_table }}
+    </table>
+    <input type="submit" value="Применить">
+  </form>
+{% endblock %}

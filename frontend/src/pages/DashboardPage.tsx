@@ -33,11 +33,12 @@ export default function DashboardPage() {
   const cards = [
     { title: 'Всего заявок', value: data?.purchase_requests_total },
     { title: 'Открытые заявки', value: data?.purchase_requests_open },
-    { title: 'Ожидают заказа', value: data?.lines_waiting || data?.waiting_lines },
-    { title: 'Горят (ETA)', value: data?.hot || data?.sla_red },
-    { title: 'Желтеют (ETA)', value: data?.warn || data?.sla_yellow },
-    { title: 'Зелёная зона', value: data?.ok || data?.sla_green },
+    { title: 'Ожидают заказа', value: data?.lines_waiting ?? data?.waiting_lines ?? 0 },
+    { title: 'Горят (ETA)', value: data?.hot ?? data?.sla_red ?? data?.sla_hot ?? 0 },
+    { title: 'Желтеют (ETA)', value: data?.warn ?? data?.sla_yellow ?? data?.sla_warn ?? 0 },
+    { title: 'Зелёная зона', value: data?.ok ?? data?.sla_green ?? data?.sla_ok ?? 0 },
   ];
+
 
   return (
     <Box p={2}>
@@ -59,7 +60,7 @@ export default function DashboardPage() {
         <Card variant="outlined">
           <CardContent>
             <Typography variant="subtitle1" gutterBottom>Сырые метрики (для отладки)</Typography>
-            <pre style={{ margin:0, whiteSpace:'pre-wrap' }}>{JSON.stringify(data, null, 2)}</pre>
+            <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{JSON.stringify(data, null, 2)}</pre>
           </CardContent>
         </Card>
       </Box>
