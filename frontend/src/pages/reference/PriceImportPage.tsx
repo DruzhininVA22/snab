@@ -15,9 +15,9 @@ import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import PreviewIcon from '@mui/icons-material/Preview';
 import DoneAllIcon from '@mui/icons-material/DoneAll';
 import CompareArrowsIcon from '@mui/icons-material/CompareArrows';
-import SupplierMapDialog from './components/SupplierMapDialog';
+import SupplierMapDialog from './../components/SupplierMapDialog';
 
-import { http, fixPath } from '../api/_http';
+import { http, fixPath } from '../../api/_http';
 
 type PreviewRow = {
   row: number;

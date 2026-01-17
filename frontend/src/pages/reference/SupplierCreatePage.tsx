@@ -1,12 +1,11 @@
 /**
- * SupplierEditPage.tsx
+ * SupplierCreatePage.tsx
  * 
- * Форма редактирования поставщика.
- * 
- * Отличия от SupplierCreatePage:
- * - загрузка существующих данных при открытии
- * - отправка на PATCH вместо POST
- * - предзаполнение всех полей
+ * Форма создания поставщика с поддержкой:
+ * - базовых данных (имя, ИНН, деятельность, адрес, статус, рейтинг)
+ * - множественного выбора категорий (через CategoryTreeSelect)
+ * - контактных лиц (таблица с редактированием inline)
+ * - условий поставки (платежи, минимальный заказ, сроки, регионы)
  */
 
 import * as React from 'react';
@@ -17,16 +16,15 @@ import {
 } from '@mui/material';
 import DeleteIcon from '@mui/icons-material/Delete';
 import AddIcon from '@mui/icons-material/Add';
-import { useParams, useNavigate } from 'react-router-dom';
-import { http, fixPath } from '../api/_http';
-import CategoryTreeSelect from '../components/CategoryTreeSelect';
+import { useNavigate } from 'react-router-dom';
+import { http, fixPath } from '../../api/_http';
+import CategoryTreeSelect from '../../components/CategoryTreeSelect';
 
 // ============================================================
 // ТИПЫ ДАННЫХ
 // ============================================================
 
 type ContactRow = {
-  id?: number;
   personName: string;
   position: string;
   phone: string;
@@ -46,11 +44,7 @@ type TermState = {
 // КОМПОНЕНТ
 // ============================================================
 
-export default function SupplierEditPage() {
-  // === МАРШРУТ ===
-  const { id } = useParams<{ id: string }>();
-  const nav = useNavigate();
-
+export default function SupplierCreatePage() {
   // === СТИЛИ ===
   const pageSx = {
     px: 1, mx: -1, fontSize: '0.875rem', lineHeight: 1.35,
@@ -60,10 +54,10 @@ export default function SupplierEditPage() {
     '& .MuiTypography-h6': { fontSize: '1rem', fontWeight: 600 },
   } as const;
 
-  // === СОСТОЯНИЕ ===
-  const [loading, setLoading] = React.useState(false);
-  const [saving, setSaving] = React.useState(false);
+  // === НАВИГАЦИЯ ===
+  const nav = useNavigate();
 
+  // === СОСТОЯНИЕ: БАЗОВЫЕ ПОЛЯ ===
   const [name, setName] = React.useState('');
   const [inn, setInn] = React.useState('');
   const [activity, setActivity] = React.useState('');
@@ -73,10 +67,15 @@ export default function SupplierEditPage() {
   const [status, setStatus] = React.useState<string>('regular');
   const [notes, setNotes] = React.useState('');
 
+  // === СОСТОЯНИЕ: КАТЕГОРИИ ===
   const [categoryIds, setCategoryIds] = React.useState<number[]>([]);
 
-  const [contacts, setContacts] = React.useState<ContactRow[]>([]);
+  // === СОСТОЯНИЕ: КОНТАКТЫ ===
+  const [contacts, setContacts] = React.useState<ContactRow[]>([
+    { personName: '', position: '', phone: '', email: '', comment: '' },
+  ]);
 
+  // === СОСТОЯНИЕ: УСЛОВИЯ ПОСТАВКИ ===
   const [terms, setTerms] = React.useState<TermState>({
     paymentTerms: '',
     minOrderAmount: '',
@@ -85,55 +84,8 @@ export default function SupplierEditPage() {
     deliveryNotes: '',
   });
 
-  // === ЭФФЕКТ: ЗАГРУЗКА ДАННЫХ ПОСТАВЩИКА ===
-  React.useEffect(() => {
-    async function loadData() {
-      setLoading(true);
-      try {
-        const { data } = await http.get(fixPath(`/api/suppliers/${id}/`));
-        
-        // Заполняем базовые поля
-        setName(data.name);
-        setInn(data.inn);
-        setActivity(data.activity);
-        setAddress(data.address);
-        setIsActive(!!data.is_active);
-        setRating(Number(data.rating ?? 0));
-        setStatus(data.status || 'regular');
-        setNotes(data.notes);
-
-        // Заполняем категории
-        setCategoryIds(Array.isArray(data.categories) ? data.categories.map((c: any) => c.id || c) : []);
-
-        // Заполняем контакты
-        setContacts(
-          Array.isArray(data.contacts)
-            ? data.contacts.map((c: any) => ({
-                id: c.id,
-                personName: c.person_name || '',
-                position: c.position || '',
-                phone: c.phone || '',
-                email: c.email || '',
-                comment: c.comment || '',
-              }))
-            : []
-        );
-
-        // Заполняем условия поставки
-        setTerms({
-          paymentTerms: data.terms?.payment_terms || '',
-          minOrderAmount: data.terms?.min_order_amount || '',
-          leadTimeDays: data.terms?.lead_time_days != null ? String(data.terms.lead_time_days) : '',
-          deliveryRegions: data.terms?.delivery_regions || '',
-          deliveryNotes: data.terms?.delivery_notes || '',
-        });
-      } finally {
-        setLoading(false);
-      }
-    }
-
-    if (id) loadData();
-  }, [id]);
+  // === СОСТОЯНИЕ: ЗАГРУЗКА ===
+  const [saving, setSaving] = React.useState(false);
 
   // === ОБРАБОТЧИКИ ===
   const addContact = () => {
@@ -177,8 +129,8 @@ export default function SupplierEditPage() {
           delivery_notes: terms.deliveryNotes,
         },
       };
-      await http.patch(fixPath(`/api/suppliers/${id}/`), payload);
-      nav('/suppliers');
+      await http.post(fixPath('/api/suppliers/'), payload);
+      nav('/reference/suppliers');
     } catch (e: any) {
       alert(`Ошибка: ${e?.message}`);
     } finally {
@@ -190,21 +142,20 @@ export default function SupplierEditPage() {
   return (
     <Box sx={pageSx}>
       <Card>
-        {loading && <LinearProgress />}
         <CardContent>
           <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 2 }}>
-            <Typography variant="h6">Редактирование поставщика (ID: {id})</Typography>
+            <Typography variant="h6">Новый поставщик</Typography>
             <Stack direction="row" spacing={1}>
               <Button onClick={save} variant="contained" disabled={!canSave || saving}>
                 Сохранить
               </Button>
-              <Button onClick={() => nav('/suppliers')}>
+              <Button onClick={() => nav('/reference/suppliers')}>
                 Отмена
               </Button>
             </Stack>
           </Stack>
 
-          {/* === БАЗОВЫЕ ПОЛЯ (как в Create) === */}
+          {/* === БАЗОВЫЕ ПОЛЯ === */}
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ mb: 2, flexWrap: 'wrap' }}>
             <TextField
               size="small"
@@ -278,7 +229,7 @@ export default function SupplierEditPage() {
             sx={{ mb: 2 }}
           />
 
-          {/* === КАТЕГОРИИ (MULTIPLE) === */}
+          {/* === ВЫБОР КАТЕГОРИЙ (MULTIPLE) === */}
           <FormControl size="small" fullWidth sx={{ mb: 3 }}>
             <CategoryTreeSelect
               multiple={true}
@@ -288,7 +239,7 @@ export default function SupplierEditPage() {
             />
           </FormControl>
 
-          {/* === КОНТАКТЫ (как в Create) === */}
+          {/* === КОНТАКТЫ === */}
           <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>
             <Typography variant="subtitle1">Контакты</Typography>
             <Button startIcon={<AddIcon />} onClick={addContact}>
@@ -316,7 +267,7 @@ export default function SupplierEditPage() {
                       onChange={(e) => setContacts((prev) =>
                         prev.map((r, i) => i === idx ? { ...r, personName: e.target.value } : r)
                       )}
-                      placeholder="ФИО"
+                      placeholder="Иван Иванов"
                     />
                   </TableCell>
                   <TableCell>
@@ -326,7 +277,7 @@ export default function SupplierEditPage() {
                       onChange={(e) => setContacts((prev) =>
                         prev.map((r, i) => i === idx ? { ...r, position: e.target.value } : r)
                       )}
-                      placeholder="Должность"
+                      placeholder="Менеджер"
                     />
                   </TableCell>
                   <TableCell>
@@ -336,7 +287,7 @@ export default function SupplierEditPage() {
                       onChange={(e) => setContacts((prev) =>
                         prev.map((r, i) => i === idx ? { ...r, phone: e.target.value } : r)
                       )}
-                      placeholder="Телефон"
+                      placeholder="+7..."
                     />
                   </TableCell>
                   <TableCell>
@@ -346,7 +297,7 @@ export default function SupplierEditPage() {
                       onChange={(e) => setContacts((prev) =>
                         prev.map((r, i) => i === idx ? { ...r, email: e.target.value } : r)
                       )}
-                      placeholder="Email"
+                      placeholder="mail@..."
                     />
                   </TableCell>
                   <TableCell>
@@ -369,7 +320,7 @@ export default function SupplierEditPage() {
             </TableBody>
           </Table>
 
-          {/* === УСЛОВИЯ ПОСТАВКИ (как в Create) === */}
+          {/* === УСЛОВИЯ ПОСТАВКИ === */}
           <Typography variant="subtitle1" sx={{ mb: 1 }}>
             Условия поставки и оплаты
           </Typography>

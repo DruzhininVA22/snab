@@ -6,7 +6,22 @@
  */
 import * as React from 'react';
 import { useParams } from 'react-router-dom';
-import { Box, Paper, Typography, Stack, TextField, Button, Divider, Alert, IconButton, MenuItem, } from '@mui/material';
+import {
+  Box,
+  Paper,
+  Typography,
+  Stack,
+  TextField,
+  Button,
+  Divider,
+  Alert,
+  IconButton,
+  MenuItem,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+} from '@mui/material';
 import DeleteIcon from '@mui/icons-material/Delete';
 import SaveIcon from '@mui/icons-material/Save';
 import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
@@ -19,11 +34,12 @@ import {
   createStageWithFallback,
   applyTemplateToProject,
   fetchStageTemplates,
+  saveProjectStagesAsTemplate,
   type Project,
   type ProjectStage,
   type StageTemplate,
-} from '../api/projects';
-import { updateStage, deleteStage, reorderProjectStages } from '../api/projects.extra';
+} from '../../api/projects';
+import { updateStage, deleteStage, reorderProjectStages } from '../../api/projects.extra';
 
 export default function ProjectCardPage() {
   const params = useParams();
@@ -43,14 +59,16 @@ export default function ProjectCardPage() {
     enabled: Number.isFinite(projectId) && projectId > 0,
   });
 
+  // ---------- локальное состояние для новых этапов ----------
   const [newName, setNewName] = React.useState('Новый этап');
   const nextOrder = React.useMemo(() => {
-    const orders = (stages || []).map(s => s.order || 0);
+    const orders = (stages || []).map((s) => s.order || 0);
     return (orders.length ? Math.max(...orders) : 0) + 1;
   }, [stages]);
   const [newOrder, setNewOrder] = React.useState<number>(nextOrder);
   React.useEffect(() => setNewOrder(nextOrder), [nextOrder]);
 
+  // ---------- CRUD по этапам ----------
   const createMut = useMutation({
     mutationFn: (payload: { name: string; order?: number | null }) =>
       createStageWithFallback(projectId, payload),
@@ -94,10 +112,11 @@ export default function ProjectCardPage() {
     const tmp = arr[idx];
     arr[idx] = arr[j];
     arr[j] = tmp;
-    const ids = arr.map(s => s.id);
+    const ids = arr.map((s) => s.id);
     reorderMut.mutate(ids);
   };
 
+  // ---------- редактирование шапки проекта ----------
   const [editName, setEditName] = React.useState('');
   const [editCode, setEditCode] = React.useState('');
   const [editStatus, setEditStatus] = React.useState('');
@@ -117,12 +136,15 @@ export default function ProjectCardPage() {
     },
   });
 
+  // ---------- шаблоны этапов: применение к пустому проекту ----------
   const [templates, setTemplates] = React.useState<StageTemplate[]>([]);
   const [tplId, setTplId] = React.useState<number | ''>('');
 
   React.useEffect(() => {
     if (stages.length === 0) {
-      fetchStageTemplates().then(setTemplates).catch(() => setTemplates([]));
+      fetchStageTemplates()
+        .then(setTemplates)
+        .catch(() => setTemplates([]));
     }
   }, [stages.length]);
 
@@ -138,6 +160,22 @@ export default function ProjectCardPage() {
       qc.setQueryData(['project-stages', projectId], newStages || []);
     },
   });
+
+  // ---------- сохранение текущих этапов как шаблона ----------
+  const [saveTplOpen, setSaveTplOpen] = React.useState(false);
+  const [tplName, setTplName] = React.useState('');
+  const [tplDesc, setTplDesc] = React.useState('');
+
+  const saveTplMut = useMutation({
+    mutationFn: () =>
+      saveProjectStagesAsTemplate(projectId, {
+        name: tplName || project?.name || `Шаблон проекта #${projectId}`,
+        description: tplDesc,
+        is_system: false,
+      }),
+  });
+  console.log('render ProjectCardPage', { saveTplOpen });
+
 
   return (
     <Box sx={{ p: 2 }}>
@@ -193,12 +231,38 @@ export default function ProjectCardPage() {
           </Stack>
         </Paper>
       )}
+
       <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
-        <Typography variant="subtitle1" sx={{ mb: 1 }}>Этапы</Typography>
+        <Stack direction="row" spacing={1} sx={{ mb: 1 }} alignItems="center">
+          <Typography variant="subtitle1" sx={{ flexGrow: 1 }}>
+            Этапы
+          </Typography>
+          <Button
+            size="small"
+            variant="outlined"
+            disabled={!stages.length}
+            onClick={() => {
+              console.log('click save template', { stagesLen: stages.length });
+              setTplName(project?.name || '');
+              setTplDesc('');
+              setSaveTplOpen(true);
+            }}
+          >
+            Сохранить как шаблон
+          </Button>
+        </Stack>
 
         <Stack spacing={1} sx={{ mb: 2 }}>
           {stages.map((s, idx) => (
-            <Box key={s.id} sx={{ display: 'grid', gridTemplateColumns: '80px 1fr 140px 160px', gap: 1, alignItems: 'center' }}>
+            <Box
+              key={s.id}
+              sx={{
+                display: 'grid',
+                gridTemplateColumns: '80px 1fr 140px 160px',
+                gap: 1,
+                alignItems: 'center',
+              }}
+            >
               <TextField
                 size="small"
                 label="№"
@@ -207,7 +271,9 @@ export default function ProjectCardPage() {
                 onChange={(e) => {
                   const val = Number(e.target.value);
                   qc.setQueryData(['project-stages', projectId], (prev: any) =>
-                    (prev || []).map((x: any) => x.id === s.id ? { ...x, order: val } : x)
+                    (prev || []).map((x: any) =>
+                      x.id === s.id ? { ...x, order: val } : x,
+                    ),
                   );
                 }}
               />
@@ -218,23 +284,58 @@ export default function ProjectCardPage() {
                 onChange={(e) => {
                   const v = e.target.value;
                   qc.setQueryData(['project-stages', projectId], (prev: any) =>
-                    (prev || []).map((x: any) => x.id === s.id ? { ...x, name: v } : x)
+                    (prev || []).map((x: any) =>
+                      x.id === s.id ? { ...x, name: v } : x,
+                    ),
                   );
                 }}
               />
               <Stack direction="row" spacing={0.5}>
-                <IconButton size="small" onClick={() => move(idx, -1)} disabled={idx === 0}><ArrowUpwardIcon fontSize="small" /></IconButton>
-                <IconButton size="small" onClick={() => move(idx, +1)} disabled={idx === stages.length - 1}><ArrowDownwardIcon fontSize="small" /></IconButton>
+                <IconButton
+                  size="small"
+                  onClick={() => move(idx, -1)}
+                  disabled={idx === 0}
+                >
+                  <ArrowUpwardIcon fontSize="small" />
+                </IconButton>
+                <IconButton
+                  size="small"
+                  onClick={() => move(idx, +1)}
+                  disabled={idx === stages.length - 1}
+                >
+                  <ArrowDownwardIcon fontSize="small" />
+                </IconButton>
               </Stack>
               <Stack direction="row" spacing={0.5}>
-                <IconButton size="small" color="primary" onClick={() => {
-                  const current = (qc.getQueryData(['project-stages', projectId]) as any[] || []).find(x => x.id === s.id);
-                  saveMut.mutate({ id: s.id, name: current?.name, order: current?.order });
-                }}><SaveIcon fontSize="small" /></IconButton>
-                <IconButton size="small" color="error" onClick={() => deleteMut.mutate(s.id)}><DeleteIcon fontSize="small" /></IconButton>
+                <IconButton
+                  size="small"
+                  color="primary"
+                  onClick={() => {
+                    const current =
+                      ((qc.getQueryData([
+                        'project-stages',
+                        projectId,
+                      ]) as any[]) || []).find((x) => x.id === s.id);
+                    saveMut.mutate({
+                      id: s.id,
+                      name: current?.name,
+                      order: current?.order,
+                    });
+                  }}
+                >
+                  <SaveIcon fontSize="small" />
+                </IconButton>
+                <IconButton
+                  size="small"
+                  color="error"
+                  onClick={() => deleteMut.mutate(s.id)}
+                >
+                  <DeleteIcon fontSize="small" />
+                </IconButton>
               </Stack>
             </Box>
           ))}
+
           {stages.length === 0 && (
             <Box sx={{ mt: 2 }}>
               <Alert severity="info" sx={{ mb: 2 }}>
@@ -250,7 +351,7 @@ export default function ProjectCardPage() {
                   value={tplId}
                   onChange={(e) => setTplId(Number(e.target.value) || '')}
                 >
-                  {templates.map(t => (
+                  {templates.map((t) => (
                     <MenuItem key={t.id} value={t.id}>
                       {t.name}
                     </MenuItem>
@@ -273,18 +374,80 @@ export default function ProjectCardPage() {
               )}
             </Box>
           )}
-
         </Stack>
 
         <Divider sx={{ my: 1.5 }} />
         <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
-          <TextField label="Название этапа" size="small" value={newName} onChange={(e) => setNewName(e.target.value)} sx={{ minWidth: 260 }} />
-          <TextField label="Порядок" size="small" type="number" value={newOrder ?? ''} onChange={(e) => setNewOrder(Number(e.target.value))} sx={{ width: 140 }} />
-          <Button variant="contained" onClick={() => createMut.mutate({ name: newName || 'Этап', order: newOrder })} disabled={!newName || createMut.isLoading}>
+          <TextField
+            label="Название этапа"
+            size="small"
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            sx={{ minWidth: 260 }}
+          />
+          <TextField
+            label="Порядок"
+            size="small"
+            type="number"
+            value={newOrder ?? ''}
+            onChange={(e) => setNewOrder(Number(e.target.value))}
+            sx={{ width: 140 }}
+          />
+          <Button
+            variant="contained"
+            onClick={() =>
+              createMut.mutate({ name: newName || 'Этап', order: newOrder })
+            }
+            disabled={!newName || createMut.isLoading}
+          >
             Добавить этап
           </Button>
         </Stack>
       </Paper>
+
+      <Dialog open={saveTplOpen} onClose={() => setSaveTplOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Сохранить текущие этапы как шаблон</DialogTitle>
+        <DialogContent dividers>
+          <Stack spacing={1.5} sx={{ mt: 1 }}>
+            <TextField
+              label="Название шаблона"
+              size="small"
+              value={tplName}
+              onChange={(e) => setTplName(e.target.value)}
+              fullWidth
+            />
+            <TextField
+              label="Описание"
+              size="small"
+              value={tplDesc}
+              onChange={(e) => setTplDesc(e.target.value)}
+              fullWidth
+              multiline
+              minRows={2}
+            />
+            {saveTplMut.isError && (
+              <Alert severity="error">Не удалось сохранить шаблон</Alert>
+            )}
+            {saveTplMut.isSuccess && (
+              <Alert severity="success">Шаблон сохранён</Alert>
+            )}
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button
+            variant="contained"
+            disabled={!tplName || saveTplMut.isLoading}
+            onClick={() =>
+              saveTplMut.mutate(undefined, {
+                onSuccess: () => setSaveTplOpen(false),
+              })
+            }
+          >
+            Сохранить
+          </Button>
+          <Button onClick={() => setSaveTplOpen(false)}>Отмена</Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }

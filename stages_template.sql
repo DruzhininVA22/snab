@@ -1,13 +1,8 @@
---  выполнить через psql -f stages_template.sql в уже работающей базе.
+-- 
+-- 
+-- Использование: docker-compose exec -T postgres psql -U snab -d snab < stages_template.sql
 --
 --
--- или (для Docker):
--- сначала нужно скопировать файл внутрь контейнера:
---
--- bash
--- docker cp stages_template.sql snab-postgres-1:/tmp/stages_template.sql
--- docker exec -it snab-postgres-1 psql -U snab -d snab -f /tmp/stages_template.sql
--- ( docker exec -i snab-postgres-1 psql -U snab -d snab < stages_template.sql ) - для Windows!!
 --
 -- Проверить можно:
 --

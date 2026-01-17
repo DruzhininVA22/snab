@@ -110,21 +110,22 @@ export default function PurchaseRequestCreatePage() {
     setSaving(true);
     try {
       const payload: any = {
-        comment,
-        project: projectId,
-        stage: stageId,
-        project_stage: stageId,
+        comment: comment,
+        project_stage_id: stageId,
         lines: lines
-          .filter(l => l.item != null && l.qty > 0)
-          .map(l => {
-            const base: any = { item: l.item, qty: l.qty, note: l.note || '' };
-            if (l.unit) base.unit = l.unit;
-            // при необходимости можно добавить category:
-            // if (l.categoryId) base.category = l.categoryId;
-            return base;
-          }),
+          .filter(l => l.item !== null && l.qty > 0)
+          .map(l => ({
+            item: l.item,
+            qty: l.qty,
+            unit: l.unit ?? undefined,
+            comment: l.note,
+          })),
       };
-      await http.post(fixPath('/api/procurement/purchase-requests/'), payload);
+
+      // console.log('Sending payload:', payload);
+      const res = await http.post(fixPath('/api/procurement/purchase-requests/'), payload);
+      // console.log('Response:', res.data);
+
       window.location.href = '/pr';
     } catch {
       alert('Не удалось создать заявку');

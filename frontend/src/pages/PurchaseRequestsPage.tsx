@@ -180,6 +180,17 @@ export default function PurchaseRequestsPage() {
     return () => { alive = false; };
   }, [selectedId]);
 
+  const deleteRequest = async (id: number) => {
+    if (!window.confirm('Удалить заявку?')) return;
+    try {
+      await http.delete(fixPath(`/api/procurement/purchase-requests/${id}/`));
+      alert('Удалено');
+      loadList();
+    } catch (e: any) {
+      alert('Ошибка: ' + e?.message);
+    }
+  };
+
   return (
     // ↓ уменьшаем горизонтальные поля страницы ~вдвое
     <Box
@@ -252,41 +263,55 @@ export default function PurchaseRequestsPage() {
               {!loading && !!err && <ListItem><ListItemText primary="Ошибка: " secondary={err} /></ListItem>}
               {!loading && !err && list.length === 0 && <ListItem><ListItemText primary="Нет заявок" /></ListItem>}
               {list.map((r) => {
-                const desc = (r.comment || '').trim();
-                const statusLabel = REQUEST_STATUS_LABELS[r.status ?? ''] || (r.status || '—');
+                const desc = r.comment?.trim();
+                const statusLabel = REQUEST_STATUS_LABELS[r.status] ?? r.status;
+
                 return (
                   <ListItem key={r.id} disablePadding selected={r.id === selectedId}>
                     <ListItemButton onClick={() => setSelectedId(r.id)}>
                       <ListItemText
                         primary={
-                          <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                            <Box sx={{ flex: 1 }}>{fmt(r.created_at)} · №{r.id}</Box>
-                            <Box sx={{ textAlign: 'right' }}>
-                              <Typography component="span" sx={{ fontWeight: 700, color: 'text.primary' }}>
+                          <Box component="span" sx={{ display: 'flex', alignItems: 'center' }}>
+                            <Box component="span" sx={{ flex: 1 }}>
+                              {fmt(r.created_at)} ID {r.id}
+                            </Box>
+                            <Box component="span" sx={{ textAlign: 'right' }}>
+                              <Typography
+                                component="span"
+                                sx={{ fontWeight: 700, color: 'text.primary' }}
+                              >
                                 {statusLabel}
                               </Typography>
                             </Box>
                           </Box>
                         }
                         secondary={
-                          <>
-                            <Box sx={{ display: 'flex', alignItems: 'center', mt: 0.3 }}>
-                              <Typography component="span" sx={{ fontWeight: 700, color: 'primary.main' }}>
-                                {r.project_name || '— проект'}
-                              </Typography>
-                              <Box sx={{ flex: 1, textAlign: 'center', color: 'text.primary' }}>|</Box>
-                              <Typography component="span" sx={{ fontWeight: 700, color: 'success.main', textAlign: 'right' }}>
-                                {r.stage_name || '— этап'}
-                              </Typography>
-                            </Box>
+                          <Box component="span">
+                            <Typography
+                              component="span"
+                              variant="body2"
+                              sx={{ fontWeight: 700, color: 'primary.main' }}
+                            >
+                              {r.project_name || `Проект #${r.project_id || '—'}`}
+                            </Typography>
+                            {' → '}
+                            <Typography
+                              component="span"
+                              variant="body2"
+                              sx={{ fontWeight: 700, color: 'success.main' }}
+                            >
+                              {r.stage_name || `Этап #${r.stage_id || '—'}`}
+                            </Typography>
                             {desc && (
-                              <div style={{ marginTop: 2 }}>
-                                <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                                  {desc}
-                                </Typography>
-                              </div>
+                              <Typography
+                                component="span"
+                                variant="body2"
+                                sx={{ display: 'block', mt: 0.5, fontWeight: 500 }}
+                              >
+                                {desc}
+                              </Typography>
                             )}
-                          </>
+                          </Box>
                         }
                       />
                     </ListItemButton>
@@ -311,7 +336,17 @@ export default function PurchaseRequestsPage() {
                   <Button size="small" variant="outlined" href={fixPath(`/pr/${selectedId}/edit`)}>
                     Редактировать
                   </Button>
+                  <Button
+                    size="small"
+                    color="error"
+                    variant="outlined"
+                    disabled={!selectedId}
+                    onClick={() => deleteRequest(selectedId)}
+                  >
+                    Удалить
+                  </Button>
                 </Box>
+
 
                 {/* Описание слева, атрибуты справа (вправо, столбцом) */}
                 <Box sx={{ display: 'flex', gap: 2, alignItems: 'flex-start', mb: 1, flexWrap: 'wrap' }}>
@@ -375,6 +410,6 @@ export default function PurchaseRequestsPage() {
           </Paper>
         </Grid>
       </Grid>
-    </Box>
+    </Box >
   );
 }

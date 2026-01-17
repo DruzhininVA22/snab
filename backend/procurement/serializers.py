@@ -108,10 +108,11 @@ class PurchaseRequestSerializer(serializers.ModelSerializer):
 
     lines = PurchaseRequestLineSerializer(many=True, read_only=True)
 
-    project_id = serializers.IntegerField(source="project.id", read_only=True)
-    project_stage_id = serializers.IntegerField(
-        source="project_stage.id", read_only=True, allow_null=True
-    )
+    project_id = serializers.IntegerField(source="project_stage.project.id", read_only=True, allow_null=True)
+    project_stage_id = serializers.IntegerField(source="project_stage.id", read_only=True, allow_null=True)
+
+    project_name = serializers.CharField(source='project_stage.project.name', read_only=True)
+    stage_name = serializers.CharField(source='project_stage.name', read_only=True)
 
     class Meta:
         model = PurchaseRequest
@@ -119,6 +120,8 @@ class PurchaseRequestSerializer(serializers.ModelSerializer):
             "id",
             "project_id",
             "project_stage_id",
+            'project_name',      
+            'stage_name',        
             "status",
             "requested_by",
             "comment",
@@ -127,6 +130,7 @@ class PurchaseRequestSerializer(serializers.ModelSerializer):
             "updated_at",
             "lines",
         ]
+        read_only_fields = ['created_at', 'updated_at']
 
 
 # ============================================================

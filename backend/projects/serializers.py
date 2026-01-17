@@ -5,7 +5,13 @@ DRF сериализаторы приложения projects.
 """
 
 from rest_framework import serializers
-from .models import Project, ProjectStage, Task
+from .models import  (
+    Project, 
+    ProjectStage, 
+    Task,
+    StageTemplate,
+    StageTemplateLine,
+)
 
 
 class ProjectStageSerializer(serializers.ModelSerializer):
@@ -111,3 +117,18 @@ class ProjectSerializer(serializers.ModelSerializer):
     class Meta:
         model = Project
         fields = ["id", "code", "name", "status", "start_date", "end_date", "description"]
+
+class StageTemplateLineSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = StageTemplateLine
+        fields = ['id', 'template', 'order', 'name']
+        read_only_fields = ['id']
+
+
+class StageTemplateSerializer(serializers.ModelSerializer):
+    lines = StageTemplateLineSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = StageTemplate
+        fields = ['id', 'name', 'description', 'is_active', 'lines']
+        read_only_fields = ['id']

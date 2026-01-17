@@ -36,8 +36,8 @@ import {
   TableHead,
   TableRow,
 } from '@mui/material';
-import { http, fixPath } from '../api/_http';
-import CategoryTreeSelect from '../components/CategoryTreeSelect';
+import { http, fixPath } from '../../api/_http';
+import CategoryTreeSelect from '../../components/CategoryTreeSelect';
 
 // ============================================
 // ТИПЫ ДАННЫХ
@@ -386,7 +386,7 @@ export default function SuppliersPage() {
                   <Button
                     size="small"
                     variant="contained"
-                    href={fixPath('/suppliers/new')}
+                    href={fixPath('/reference/suppliers/new')}
                   >
                     Новый поставщик
                   </Button>
@@ -462,7 +462,7 @@ export default function SuppliersPage() {
                       <Button
                         size="small"
                         variant="outlined"
-                        href={fixPath(`/suppliers/${selectedId}/edit`)}
+                        href={fixPath(`/reference/suppliers/${selectedId}/edit`)}
                       >
                         Редактировать
                       </Button>

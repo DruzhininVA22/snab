@@ -1,3 +1,6 @@
+--
+-- Использование: docker-compose exec -T postgres psql -U snab -d snab < snab_units.sql
+--
 -- Полный справочник единиц SNAB (19 единиц)
 TRUNCATE core_unit RESTART IDENTITY CASCADE;
 

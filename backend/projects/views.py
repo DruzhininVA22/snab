@@ -10,7 +10,8 @@ from typing import Any, Dict, List, Iterable
 from django.db import transaction, IntegrityError, ProgrammingError, OperationalError
 from django.db.models import Q
 
-from rest_framework import viewsets, mixins, status, generics, permissions, serializers
+from rest_framework import viewsets, mixins, status, generics, permissions, serializers, filters
+from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticatedOrReadOnly
 from rest_framework.response import Response
@@ -21,6 +22,7 @@ from .serializers import (
     ProjectDetailSerializer,
     ProjectStageSerializer,
     ProjectSerializer,
+    StageTemplateSerializer,
 )
 
 
@@ -278,6 +280,60 @@ class ProjectViewSet(
             status=status.HTTP_200_OK,
         )
 
+    @action(detail=True, methods=['post'], url_path='save_as_template')
+    def save_as_template(self, request, pk=None):
+        """
+        Создать StageTemplate из текущих этапов проекта.
+        POST /api/projects/projects/<id>/save_as_template/
+
+        body:
+        {
+          "name": "Имя шаблона",
+          "description": "...",
+          "is_system": false
+        }
+        """
+        project_id = int(pk)
+        project = Project.objects.get(pk=project_id)
+
+        name = (
+            request.data.get('name')
+            or project.name
+            or f'Шаблон проекта #{project_id}'
+        )
+        description = request.data.get('description') or ''
+        # фронт шлёт is_system, в модели поле называется is_active
+        is_system = bool(request.data.get('is_system', False))
+
+        with transaction.atomic():
+            tpl = StageTemplate.objects.create(
+                name=name,
+                description=description,
+                is_active=True,  # или not is_system, если хочется различать
+                code=None,
+            )
+
+            stages = (
+                ProjectStage.objects
+                .filter(project_id=project_id)
+                .order_by('order', 'id')
+            )
+
+            lines = [
+                StageTemplateLine(
+                    template=tpl,
+                    order=s.order or 1,
+                    name=s.name,
+                    default_duration_days=None,
+                    default_offset_days=None,
+                )
+                for s in stages
+            ]
+            StageTemplateLine.objects.bulk_create(lines)
+
+        data = StageTemplateSerializer(tpl).data
+        return Response(data, status=status.HTTP_201_CREATED)
+
 
 # ---------- ЭТАПЫ ПРОЕКТА ----------
 
@@ -443,3 +499,11 @@ class StageTemplateViewSet(viewsets.ModelViewSet):
     queryset = StageTemplate.objects.all().order_by("name", "id")
     serializer_class = StageTemplateSerializer
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+
+class StageTemplateLineViewSet(viewsets.ModelViewSet):
+    queryset = StageTemplateLine.objects.all()
+    serializer_class = StageTemplateLineSerializer
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filterset_fields = ['template']
+    ordering_fields = ['order', 'id']
+    ordering = ['order', 'id']
