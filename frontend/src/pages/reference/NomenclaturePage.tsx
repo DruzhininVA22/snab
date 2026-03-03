@@ -6,7 +6,7 @@
 import * as React from 'react';
 import {
   Box, Card, CardContent, Typography, LinearProgress, Button, IconButton, Dialog, DialogTitle, DialogContent, DialogActions,
-  TextField, Table, TableHead, TableRow, TableCell, TableBody, MenuItem, Select, FormControl, InputLabel, Stack
+  TextField, Table, TableHead, TableRow, TableCell, TableBody, MenuItem, Select, FormControl, InputLabel, FormHelperText, Stack
 } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
 import AddIcon from '@mui/icons-material/Add';
@@ -51,6 +51,8 @@ function ItemFormDialog({ open, onClose, initial, onSaved }: {
 }) {
   const units = useUnits();
   const [saving, setSaving] = React.useState(false);
+  const [errors, setErrors] = React.useState<Record<string, string>>({});
+  const [skuChecking, setSkuChecking] = React.useState(false);
   const [form, setForm] = React.useState<Partial<Item>>(
     initial || { name: '', sku: '', unit: units[0]?.id, category: null }
   );
@@ -59,32 +61,123 @@ function ItemFormDialog({ open, onClose, initial, onSaved }: {
     setForm(initial || { name: '', sku: '', unit: units[0]?.id, category: null });
   }, [initial, units]);
 
-  const setField = (k: keyof Item, v: any) => setForm(prev => ({ ...prev, [k]: v }));
+  const setField = (k: keyof Item, v: any) => {
+    setForm(prev => ({ ...prev, [k]: v }));
+    setErrors(prev => {
+      if (!prev[k as any]) return prev;
+      const next = { ...prev } as any;
+      delete next[k as any];
+      return next;
+    });
+  };
+
+  const norm = (v: any) => (v ?? '').toString().trim();
+
+
+
+const validateLocal = () => {
+  const next: Record<string, string> = {};
+  const name = norm(form.name);
+  const sku = norm(form.sku);
+
+  if (!name) next.name = 'Наименование обязательно';
+  if (!sku) next.sku = 'Артикул (SKU) обязателен';
+  if (!form.unit) next.unit = 'Ед. изм. обязательна';
+  if (!form.category) next.category = 'Категория обязательна';
+
+  setErrors((prev) => ({ ...prev, ...next }));
+  return next;
+};
+
+const checkSkuUnique = async () => {
+  const sku = norm(form.sku);
+  if (!sku) return false;
+
+  // при редактировании допускаем "свой" артикул
+  if (initial?.id && norm(initial.sku).toUpperCase() === sku.toUpperCase()) return true;
+
+  setSkuChecking(true);
+  try {
+    const res = await http.get(fixPath('/api/items/'), { params: { search: sku, page_size: 50 } });
+    const arr = Array.isArray((res.data as any)?.results) ? (res.data as any).results : (res.data as any);
+    const found = (arr || []).some((it: any) => norm(it?.sku).toUpperCase() === sku.toUpperCase());
+    if (found) {
+      setErrors((prev) => ({ ...prev, sku: 'Артикул уже используется в номенклатуре' }));
+      return false;
+    }
+    // очистим ошибку sku, если была
+    setErrors((prev) => {
+      const { sku: _sku, ...rest } = prev;
+      return rest;
+    });
+    return true;
+  } catch {
+    // не блокируем сохранение, но и не гарантируем уникальность
+    return true;
+  } finally {
+    setSkuChecking(false);
+  }
+};
 
   const submit = async () => {
-    setSaving(true);
-    try {
-      const payload: any = {
-        name: form.name,
-        unit: form.unit,
-      };
-      if (typeof form.sku !== 'undefined') payload.sku = form.sku;
-      // serializer ожидает category как строковый ID (мы передадим число — бек примет, он сам приведёт в строку)
-      if (typeof form.category !== 'undefined') payload.category = form.category ?? '';
-
-      if (initial && initial.id) {
-        const { data } = await http.patch(fixPath(`/api/items/${initial.id}/`), payload);
-        onSaved(data);
-      } else {
-        const { data } = await http.post(fixPath('/api/items/'), payload);
-        onSaved(data);
-      }
-      onClose();
-    } catch (e) {
-      alert('Не удалось сохранить номенклатуру');
-    } finally {
-      setSaving(false);
+    // client-side validation (чтобы не получать "Не удалось сохранить" без подсказок)
+    setErrors({});
+    const localErrors = validateLocal();
+    if (Object.keys(localErrors).length) {
+      alert('Заполните обязательные поля');
+      return;
     }
+    const skuOk = await checkSkuUnique();
+    if (!skuOk) {
+      alert('Проверьте артикул (SKU)');
+      return;
+    }
+
+    
+  setSaving(true);
+  try {
+    const payload: any = {
+      name: norm(form.name),
+      sku: norm(form.sku),
+      unit: form.unit,
+      category: form.category,
+    };
+
+    if (initial && initial.id) {
+      const { data } = await http.patch(fixPath(`/api/items/${initial.id}/`), payload);
+      onSaved(data);
+    } else {
+      const { data } = await http.post(fixPath('/api/items/'), payload);
+      onSaved(data);
+    }
+    onClose();
+  } catch (e: any) {
+    // Покажем пользователю причину (валидация/уникальность), а не общий текст
+    const data = e?.response?.data;
+    const next: Record<string, string> = {};
+
+    const pushField = (k: string, v: any) => {
+      if (Array.isArray(v)) next[k] = v.join(' ');
+      else if (typeof v === 'string') next[k] = v;
+      else if (v != null) next[k] = String(v);
+    };
+
+    if (data && typeof data === 'object') {
+      Object.keys(data).forEach((k) => pushField(k, (data as any)[k]));
+    }
+
+    if (Object.keys(next).length) {
+      setErrors((prev) => ({ ...prev, ...next }));
+      const msg = Object.entries(next)
+        .map(([k, v]) => `${k}: ${v}`)
+        .join('\n');
+      alert('Ошибка сохранения:\n' + msg);
+    } else {
+      alert('Не удалось сохранить номенклатуру: ' + (e?.message || 'unknown'));
+    }
+  } finally {
+    setSaving(false);
+  }
   };
 
   return (
@@ -94,6 +187,8 @@ function ItemFormDialog({ open, onClose, initial, onSaved }: {
         <Stack spacing={2} sx={{ mt: 1 }}>
           <TextField
             label="Наименование"
+            error={!!errors.name}
+            helperText={errors.name || ""}
             value={form.name ?? ''}
             onChange={(e) => setField('name', e.target.value)}
             fullWidth
@@ -102,13 +197,16 @@ function ItemFormDialog({ open, onClose, initial, onSaved }: {
           {'sku' in (initial || {}) || true ? (
             <TextField
               label="Артикул (SKU)"
+              error={!!errors.sku}
+              helperText={errors.sku || (skuChecking ? "Проверка уникальности..." : "")}
+              onBlur={() => { void checkSkuUnique(); }}
               value={form.sku ?? ''}
               onChange={(e) => setField('sku', e.target.value)}
               fullWidth
               size="small"
             />
           ) : null}
-          <FormControl fullWidth size="small">
+          <FormControl fullWidth size="small" error={!!errors.unit}>
             <InputLabel id="unit-label">Ед. изм.</InputLabel>
             <Select
               labelId="unit-label"
@@ -118,6 +216,7 @@ function ItemFormDialog({ open, onClose, initial, onSaved }: {
             >
               {units.map(u => <MenuItem key={u.id} value={u.id}>{u.name}</MenuItem>)}
             </Select>
+            <FormHelperText>{errors.unit || ""}</FormHelperText>
           </FormControl>
 
           {/* Новый выбор категории: дерево H→S в отдельном диалоге с рекомендациями */}
@@ -126,11 +225,32 @@ function ItemFormDialog({ open, onClose, initial, onSaved }: {
             onChange={(id) => setField('category', id)}
             label="Категория (Sxx)"
           />
+
+          {errors.category ? (
+            <Typography variant="body2" color="error">
+              {errors.category}
+            </Typography>
+          ) : null}
         </Stack>
       </DialogContent>
       <DialogActions>
         <Button onClick={onClose}>Отмена</Button>
-        <Button onClick={submit} disabled={saving || !form.name || !form.unit} variant="contained">
+        <Button
+          onClick={submit}
+          disabled={
+            saving ||
+            skuChecking ||
+            !norm(form.name) ||
+            !norm(form.sku) ||
+            !form.unit ||
+            !form.category ||
+            !!errors.name ||
+            !!errors.sku ||
+            !!errors.unit ||
+            !!errors.category
+          }
+          variant="contained"
+        >
           Сохранить
         </Button>
       </DialogActions>

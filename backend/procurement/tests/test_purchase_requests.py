@@ -6,7 +6,19 @@ from procurement.models import PurchaseRequest, PurchaseRequestLine
 from projects.models import Project, ProjectStage, Task
 from core.models import Unit
 from catalog.models import Category, Item
+from django.contrib.auth import get_user_model
+from rest_framework.test import APIClient
 
+BASE = "/api/procurement/purchase-requests/"
+
+def pr_list_url():
+    return BASE
+
+def pr_detail_url(pk):
+    return f"{BASE}{pk}/"
+
+def pr_refs_url():
+    return f"{BASE}refs/"
 
 class PurchaseRequestAPITests(APITestCase):
     """
@@ -22,6 +34,15 @@ class PurchaseRequestAPITests(APITestCase):
         - единица измерения,
         - категория и номенклатура (Item) для строк заявки.
         """
+
+        self.client = APIClient()
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="root",
+            email="",
+            password="druvlan",
+        )
+        self.client.force_authenticate(user=self.user)
         self.project = Project.objects.create(code="PRJ1", name="Проект 1")
 
         self.stage = ProjectStage.objects.create(
@@ -54,7 +75,8 @@ class PurchaseRequestAPITests(APITestCase):
         """
         Создание заявки с двумя строками одним POST‑запросом.
         """
-        url = reverse("purchaserequest-list")
+        #url = reverse("purchaserequest-list")
+        url = pr_list_url()
 
         payload = {
             "project": self.project.id,
@@ -164,7 +186,8 @@ class PurchaseRequestAPITests(APITestCase):
             task=self.task,
         )
 
-        url = reverse("purchaserequest-detail", args=[pr.id])
+        #url = reverse("purchaserequest-detail", args=[pr.id])
+        url = pr_detail_url(pr.id)
 
         payload = {
             "project": self.project.id,
@@ -233,6 +256,35 @@ class PurchaseRequestAPITests(APITestCase):
             PurchaseRequestLine.objects.filter(id=line2.id).exists()
         )
 
+    def test_purchase_request_detail_includes_line_category_name(self):
+        """GET detail должен отдавать category_name для строк, чтобы фронт показывал категорию."""
+
+        pr = PurchaseRequest.objects.create(
+            project=self.project,
+            project_stage=self.stage,
+            status="draft",
+            requested_by="User",
+            comment="",
+        )
+
+        PurchaseRequestLine.objects.create(
+            request=pr,
+            item=self.item,
+            qty="3.0",
+            unit=self.unit,
+            status="pending",
+            comment="",
+            priority="normal",
+            task=self.task,
+        )
+
+        res = self.client.get(pr_detail_url(pr.id))
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        data = res.json()
+        self.assertIn("lines", data)
+        self.assertTrue(len(data["lines"]) >= 1)
+        self.assertEqual(data["lines"][0].get("category_name"), self.category.name)
 
     def test_refs_endpoint(self):
         """
@@ -241,7 +293,9 @@ class PurchaseRequestAPITests(APITestCase):
         - отвечает 200,
         - содержит наш проект и этап.
         """
-        url = reverse("purchaserequest-refs")
+        #url = reverse("purchaserequest-refs")
+        url = pr_refs_url()
+
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 

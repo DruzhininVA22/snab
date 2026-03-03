@@ -1,0 +1,257 @@
+# ПОЛНЫЕ ТЕСТЫ ПРАЙС-ЛИСТОВ
+#
+# Запуск: docker-compose exec web python manage.py test -v 2
+
+import pytest
+from django.test import TestCase
+from django.contrib.auth import get_user_model
+from django.urls import reverse
+from rest_framework.test import APITestCase, APIClient
+from rest_framework import status
+from decimal import Decimal
+from datetime import date, timedelta
+from suppliers.models import Supplier
+from catalog.models import Item, Unit
+from procurement.models import (
+    SupplierPriceList, 
+    SupplierPriceListLine, 
+    ItemSupplierMapping
+)
+from procurement.tests.factories import (
+    supplier_factory, item_factory, unit_factory,
+    price_list_factory, price_line_factory, mapping_factory
+)
+
+User = get_user_model()
+
+class Block2ModelsTest(TestCase):
+    \"\"\"Тесты моделей Прайс-листов\"\"\"
+
+    def setUp(self):
+        self.supplier = supplier_factory()
+        self.unit = unit_factory()
+        self.item = item_factory()
+        self.price_list = price_list_factory(supplier=self.supplier)
+
+    def test_supplier_price_list_methods(self):
+        \"\"\"Тест методов SupplierPriceList\"\"\"
+
+        # Активный прайс-лист
+        pl = SupplierPriceList.objects.create(
+            supplier=self.supplier,
+            name='Test Active',
+            version='1.0',
+            effective_date=date.today(),
+            is_active=True
+        )
+        self.assertTrue(pl.is_valid_today())
+        self.assertIsNone(pl.days_until_expiry())
+
+        # Истёкший
+        pl.effective_date = date.today() - timedelta(days=1)
+        pl.save()
+        self.assertFalse(pl.is_valid_today())
+
+    def test_price_list_line_calculations(self):
+        \"\"\"Тест расчётов цен\"\"\"
+
+        line = SupplierPriceListLine.objects.create(
+            price_list=self.price_list,
+            supplier_sku='TEST-001',
+            description='Тест товар',
+            unit=self.unit,
+            price=Decimal('10.00'),
+            min_quantity=100,
+            vat_included=False,
+            vat_rate=20
+        )
+
+        # Базовая цена
+        self.assertEqual(line.price, Decimal('10.00'))
+
+        # Эффективная цена (с НДС)
+        self.assertEqual(line.effective_price, Decimal('12.00'))
+
+        # Расчёт количества
+        result = line.calculate_total_for_quantity(150)
+        self.assertTrue(result['valid'])
+        self.assertEqual(result['total'], Decimal('1800.00'))
+
+        # Недостаточное количество
+        result = line.calculate_total_for_quantity(50)
+        self.assertFalse(result['valid'])
+        self.assertIn('100', result['error'])
+
+    def test_item_supplier_mapping_conversions(self):
+        \"\"\"Тест конвертации единиц\"\"\"
+
+        line = price_line_factory(price_list=self.price_list)
+        mapping = ItemSupplierMapping.objects.create(
+            item=self.item,
+            price_list_line=line,
+            conversion_factor=Decimal('2.5'),  # 1 Item = 2.5 ед. поставщика
+            is_preferred=True
+        )
+
+        # Конвертация Item → Supplier
+        self.assertEqual(mapping.convert_item_qty_to_supplier_qty(4), Decimal('10.0'))
+
+        # Конвертация Supplier → Item
+        self.assertEqual(mapping.convert_supplier_qty_to_item_qty(10), Decimal('4.0'))
+
+        # Эффективный МОК
+        self.assertEqual(mapping.get_effective_min_quantity(), Decimal('250.0'))
+
+
+class Block2APITest(APITestCase):
+    \"\"\"Тесты API Блока 2\"\"\"
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_superuser('test', 'test@example.com', 'test123')
+        self.client.force_authenticate(user=self.user)
+        
+        self.supplier = supplier_factory()
+        self.unit = unit_factory()
+        self.item = item_factory()
+        self.price_list = price_list_factory(supplier=self.supplier)
+
+    def test_price_list_list_empty(self):
+        \"\"\"GET /supplier-price-lists/ — пустой список\"\"\"
+
+        response = self.client.get('/api/procurement/supplier-price-lists/')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['count'], 0)
+
+    def test_create_price_list(self):
+        \"\"\"POST /supplier-price-lists/ — создание\"\"\"
+
+        data = {
+            'supplier': self.supplier.id,
+            'name': 'Тестовый прайс-лист',
+            'version': '1.0',
+            'effective_date': '2026-01-18'
+        }
+        response = self.client.post('/api/procurement/supplier-price-lists/', data)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['name'], 'Тестовый прайс-лист')
+
+        # Проверить создание
+        self.assertEqual(SupplierPriceList.objects.count(), 2)
+
+    def test_price_list_detail(self):
+        \"\"\"GET /supplier-price-lists/1/ — детали\"\"\"
+
+        response = self.client.get(f'/api/procurement/supplier-price-lists/{self.price_list.id}/')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['id'], self.price_list.id)
+
+    def test_price_list_active_filter(self):
+        \"\"\"GET /supplier-price-lists/active/ — только активные\"\"\"
+
+        # Создать неактивный
+        inactive = price_list_factory(is_active=False)
+        
+        response = self.client.get('/api/procurement/supplier-price-lists/active/')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['count'], 1)  # Только self.price_list активный
+
+    def test_price_line_create(self):
+        \"\"\"POST /price-list-lines/ — позиция\"\"\"
+
+        data = {
+            'price_list': self.price_list.id,
+            'supplier_sku': 'KR-001',
+            'description': 'Кирпич красный',
+            'unit': self.unit.id,
+            'price': '15.00'
+        }
+        response = self.client.post('/api/procurement/price-list-lines/', data)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['supplier_sku'], 'KR-001')
+
+    def test_item_mapping_create(self):
+        \"\"\"POST /item-supplier-mappings/ — сопоставление\"\"\"
+
+        line = price_line_factory(price_list=self.price_list)
+        
+        data = {
+            'item': self.item.id,
+            'price_list_line': line.id,
+            'conversion_factor': '1.0',
+            'is_preferred': True
+        }
+        response = self.client.post('/api/procurement/item-supplier-mappings/', data)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+    def test_find_alternative_suppliers(self):
+        \"\"\"GET /item-supplier-mappings/find-alternative/\"\"\"
+
+        # Создать сопоставления
+        line1 = price_line_factory(price_list=self.price_list)
+        line2 = price_line_factory()
+        mapping1 = mapping_factory(item=self.item, price_list_line=line1)
+        mapping2 = mapping_factory(item=self.item, price_list_line=line2)
+
+        response = self.client.get(f'/api/procurement/item-supplier-mappings/find-alternative/?item_id={self.item.id}')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertGreater(len(response.data), 0)
+
+
+class Block2IntegrationTest(APITestCase):
+    \"\"\"Интеграционные тесты\"\"\"
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_superuser('test', 'test@example.com', 'test123')
+        self.client.force_authenticate(user=self.user)
+        
+        self.supplier = supplier_factory()
+        self.unit = unit_factory()
+        self.item = item_factory()
+
+    def test_full_workflow(self):
+        \"\"\"Полный workflow: прайс-лист → позиция → сопоставление\"\"\"
+
+        # 1. Создать прайс-лист
+        pl_data = {
+            'supplier': self.supplier.id,
+            'name': 'Full Test',
+            'version': '1.0',
+            'effective_date': '2026-01-18'
+        }
+        pl_response = self.client.post('/api/procurement/supplier-price-lists/', pl_data)
+        price_list_id = pl_response.data['id']
+
+        # 2. Создать позицию
+        line_data = {
+            'price_list': price_list_id,
+            'supplier_sku': 'TEST-001',
+            'description': 'Test Item',
+            'unit': self.unit.id,
+            'price': '10.00'
+        }
+        line_response = self.client.post('/api/procurement/price-list-lines/', line_data)
+        line_id = line_response.data['id']
+
+        # 3. Создать сопоставление
+        mapping_data = {
+            'item': self.item.id,
+            'price_list_line': line_id,
+            'conversion_factor': '1.0'
+        }
+        mapping_response = self.client.post('/api/procurement/item-supplier-mappings/', mapping_data)
+        self.assertEqual(mapping_response.status_code, status.HTTP_201_CREATED)
+
+        # 4. Проверить всё создано
+        self.assertEqual(SupplierPriceList.objects.count(), 2)
+        self.assertEqual(SupplierPriceListLine.objects.count(), 2)
+        self.assertEqual(ItemSupplierMapping.objects.count(), 1)
+
+
+if __name__ == '__main__':
+    pytest.main(['-v', __file__])
+EOF
+
+echo '✅ Тесты созданы! /app/procurement/tests/test_block2.py'
+"

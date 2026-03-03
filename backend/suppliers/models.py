@@ -120,7 +120,12 @@ class SupplierPriceList(models.Model):
     currency = models.CharField('Валюта', max_length=10, default='RUB')
     comment = models.TextField('Комментарий', blank=True, default='')
     created_at = models.DateTimeField('Создано', auto_now_add=True)
-
+    
+    version = models.CharField('Версия', max_length=50, default='1.0') 
+    expiry_date = models.DateField('Действует до', null=True, blank=True) 
+    updated_at = models.DateTimeField('Обновлено', auto_now=True) 
+    is_active = models.BooleanField('Активен', default=True) 
+    
     class Meta:
         verbose_name = 'Прайс-лист поставщика'
         verbose_name_plural = 'Прайс-листы поставщиков'
@@ -157,6 +162,9 @@ class SupplierPriceLine(models.Model):
 
     price = models.DecimalField('Цена', max_digits=12, decimal_places=2)
     notes = models.CharField('Комментарий', max_length=500, blank=True, default='')
+
+    min_quantity = models.PositiveIntegerField('Минимум', default=1) 
+    lead_time_days = models.PositiveIntegerField('Сроки (дн.)', default=0)
 
     class Meta:
         verbose_name = 'Строка прайса поставщика'

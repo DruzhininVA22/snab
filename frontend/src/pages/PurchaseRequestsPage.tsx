@@ -10,7 +10,9 @@ import * as React from 'react';
 import {
   Box, Grid, Paper, List, ListItem, ListItemButton, ListItemText,
   Typography, Divider, FormControl, InputLabel, Select, MenuItem, Button,
-  CircularProgress
+  CircularProgress,
+  Dialog, DialogTitle, DialogContent, DialogActions,
+  Stack, Checkbox
 } from '@mui/material';
 import { Table, TableBody, TableCell, TableContainer, TableHead, TableRow } from '@mui/material';
 import { http, fixPath } from '../api/_http';
@@ -24,7 +26,13 @@ type PR = {
   project_name?: string | null;
   stage_id?: number | null;
   stage_name?: string | null;
+  deadline?: string | null;
   deadline_at?: string | null;
+  due_date?: string | null;
+  required_by?: string | null;
+  needed_by?: string | null;
+  need_by?: string | null;
+  target_date?: string | null;
   lines?: any[];
 };
 
@@ -40,7 +48,7 @@ const LINE_STATUS_LABELS: Record<string, string> = {
 
 const REQUEST_STATUS_LABELS: Record<string, string> = {
   draft: 'Формируется',
-  open: 'Открыта',
+  open: 'В исполнении',
   closed: 'Закрыта',
   cancelled: 'Отменена',
   canceled: 'Отменена',
@@ -54,6 +62,41 @@ function fmt(dt?: string) {
     return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
   } catch { return dt || ''; }
 }
+
+function fmtDateOnly(dt?: string) {
+  if (!dt) return '';
+  const s = String(dt);
+
+  // For date-only or ISO strings: avoid JS Date timezone shifts by formatting the YYYY-MM-DD part directly.
+  const d = s.includes('T') ? s.split('T')[0] : s;
+  const m = d.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (m) return `${m[3]}.${m[2]}.${m[1]}`;
+
+  // Fallback (kept for non-standard formats)
+  try {
+    const x = new Date(s);
+    if (Number.isNaN(x.getTime())) return s;
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${pad(x.getDate())}.${pad(x.getMonth() + 1)}.${x.getFullYear()}`;
+  } catch {
+    return s;
+  }
+}
+
+function prDeadline(pr?: PR | null) {
+  if (!pr) return undefined;
+  return (
+    pr.deadline ||
+    pr.deadline_at ||
+    pr.due_date ||
+    pr.required_by ||
+    pr.needed_by ||
+    pr.need_by ||
+    pr.target_date ||
+    undefined
+  );
+}
+
 function fmtQty(v: any) {
   const n = Number(v);
   if (!isFinite(n)) return String(v ?? '');
@@ -74,6 +117,14 @@ export default function PurchaseRequestsPage() {
   const [selectedId, setSelectedId] = React.useState<number | null>(null);
   const [selected, setSelected] = React.useState<PR | null>(null);
   const [selectedLoading, setSelectedLoading] = React.useState(false);
+
+
+  // RFQ/КП: запрос коммерческих предложений по заявке
+  const [rfqOpen, setRfqOpen] = React.useState(false);
+  const [suppliers, setSuppliers] = React.useState<Array<{ id: number; name: string }>>([]);
+  const [supplierIds, setSupplierIds] = React.useState<number[]>([]);
+  const [rfqLoading, setRfqLoading] = React.useState(false);
+  const [rfqLineIds, setRfqLineIds] = React.useState<number[]>([]);
 
   const [projects, setProjects] = React.useState<RefProject[]>([]);
   const [stages, setStages] = React.useState<RefStage[]>([]);
@@ -160,6 +211,13 @@ export default function PurchaseRequestsPage() {
     }
   }, [fltProject, fltStage, fltStatus, selectedId]);
 
+  
+  const canRequestRfq =
+  !!selectedId &&
+  !!selected &&
+  (selected.status === 'draft' || selected.status === 'open') &&
+  ((selected.lines?.length ?? 0) > 0);
+
   React.useEffect(() => { fetchProjectsList(); }, [fetchProjectsList]);
   React.useEffect(() => { loadList(); }, [loadList]);
 
@@ -177,8 +235,53 @@ export default function PurchaseRequestsPage() {
       .then(({ data }) => { if (alive) setSelected(data as PR); })
       .catch(() => { if (alive) setSelected(null); })
       .finally(() => { if (alive) setSelectedLoading(false); });
+    
     return () => { alive = false; };
   }, [selectedId]);
+  // Lazy-load suppliers list when RFQ dialog is opened
+  React.useEffect(() => {
+  if (!rfqOpen) return;
+  if (suppliers.length) return;
+
+  http
+    .get(fixPath('/api/suppliers/'))
+    .then((res) => {
+      const raw = Array.isArray(res.data) ? res.data : (res.data?.results || []);
+      const list = raw.map((s: any) => ({
+        id: Number(s.id),
+        name: (s.name || s.title || s.legal_name || `#${s.id}`).toString(),
+      }));
+      setSuppliers(list);
+    })
+    .catch(() => {
+      // не блокируем UI — список поставщиков может быть пустым/недоступным
+      setSuppliers([]);
+    });
+  }, [rfqOpen]);
+
+  
+const sendRfq = async () => {
+  if (!selectedId) return;
+  if (!supplierIds.length) return;
+
+  setRfqLoading(true);
+  try {
+    await http.post(fixPath('/api/procurement/quotes/generate-from-request/'), {
+      purchase_request_id: selectedId,
+      supplier_ids: supplierIds,
+      purchase_request_line_ids: rfqLineIds,
+    });
+    setRfqOpen(false);
+    setSupplierIds([]);
+    // переходим к списку КП
+    window.location.href = fixPath(`/quotes?purchase_request_id=${selectedId}`);
+  } catch (e: any) {
+    console.error('Generate quotes failed', e);
+    alert('Ошибка запроса КП: ' + (e?.response?.data?.detail || e?.message));
+  } finally {
+    setRfqLoading(false);
+  }
+};
 
   const deleteRequest = async (id: number) => {
     if (!window.confirm('Удалить заявку?')) return;
@@ -302,6 +405,15 @@ export default function PurchaseRequestsPage() {
                             >
                               {r.stage_name || `Этап #${r.stage_id || '—'}`}
                             </Typography>
+                            {prDeadline(r) && (
+                              <Typography
+                                component="span"
+                                variant="body2"
+                                sx={{ display: 'block', mt: 0.25, color: 'text.secondary', fontWeight: 600 }}
+                              >
+                                Дедлайн: {fmtDateOnly(prDeadline(r))}
+                              </Typography>
+                            )}
                             {desc && (
                               <Typography
                                 component="span"
@@ -336,7 +448,26 @@ export default function PurchaseRequestsPage() {
                   <Button size="small" variant="outlined" href={fixPath(`/pr/${selectedId}/edit`)}>
                     Редактировать
                   </Button>
-                  <Button
+                  
+<Button
+  size="small"
+  variant="contained"
+  onClick={() => { setRfqLineIds((selected?.lines || []).map((l: any) => Number(l.id)).filter((n: any) => Number.isFinite(n))); setRfqOpen(true); }}
+  disabled={!canRequestRfq}
+  sx={{ ml: 1 }}
+  title={
+    !selected
+      ? ''
+      : (selected.status !== 'draft' && selected.status !== 'open')
+        ? 'КП можно запрашивать только для заявок в статусе Черновик/Открыта'
+        : ((selected.lines?.length ?? 0) === 0)
+          ? 'В заявке нет позиций'
+          : ''
+  }
+>
+  Запросить КП
+</Button>
+<Button
                     size="small"
                     color="error"
                     variant="outlined"
@@ -362,7 +493,7 @@ export default function PurchaseRequestsPage() {
                     <Typography><b>Проект:</b> {selected?.project_name || '—'}</Typography>
                     <Typography><b>Этап:</b> {selected?.stage_name || '—'}</Typography>
                     <Typography><b>Статус:</b> {REQUEST_STATUS_LABELS[selected?.status ?? ''] || selected?.status || '—'}</Typography>
-                    <Typography><b>Дедлайн:</b> {fmt(selected?.deadline_at || undefined) || '—'}</Typography>
+                    <Typography><b>Дедлайн:</b> {fmtDateOnly(prDeadline(selected)) || '—'}</Typography>
                     <Typography><b>Дата создания:</b> {fmt(selected?.created_at)}</Typography>
                   </Box>
                 </Box>
@@ -409,7 +540,123 @@ export default function PurchaseRequestsPage() {
             )}
           </Paper>
         </Grid>
-      </Grid>
+      
+{/* Диалог: запрос КП (выбор поставщиков) */}
+<Dialog open={rfqOpen} onClose={() => setRfqOpen(false)} maxWidth="sm" fullWidth>
+  <DialogTitle>Запрос КП</DialogTitle>
+  <DialogContent dividers>
+    <Stack spacing={2}>
+      <Typography variant="body2" color="text.secondary">
+        Выберите поставщиков, которым будет отправлен запрос КП по заявке #{selectedId}.
+      </Typography>
+
+      <FormControl fullWidth size="small">
+        <InputLabel id="rfq-suppliers-label">Поставщики</InputLabel>
+        <Select
+          labelId="rfq-suppliers-label"
+          label="Поставщики"
+          multiple
+          value={supplierIds}
+          onChange={(e) => {
+            const v = e.target.value as unknown as number[];
+            setSupplierIds(v);
+          }}
+          renderValue={(selectedValues) => {
+            const ids = selectedValues as unknown as number[];
+            const names = suppliers
+              .filter((s) => ids.includes(s.id))
+              .map((s) => s.name);
+            return names.join(', ') || '—';
+          }}
+        >
+          {suppliers.map((s) => (
+            <MenuItem key={s.id} value={s.id}>
+              <Checkbox checked={supplierIds.includes(s.id)} />
+              <ListItemText primary={s.name} />
+            </MenuItem>
+          ))}
+        </Select>
+      </FormControl>
+
+      
+
+<Divider sx={{ my: 2 }} />
+<Typography variant="subtitle2">Позиции заявки</Typography>
+<Typography variant="body2" color="text.secondary">
+  Выберите позиции, по которым запросить КП (по умолчанию — все).
+</Typography>
+
+<Stack direction="row" spacing={1}>
+  <Button
+    size="small"
+    onClick={() =>
+      setRfqLineIds((selected?.lines || []).map((l: any) => Number(l.id)).filter((n: any) => Number.isFinite(n)))
+    }
+  >
+    Выбрать все
+  </Button>
+  <Button size="small" onClick={() => setRfqLineIds([])}>
+    Снять выбор
+  </Button>
+</Stack>
+
+<Table size="small">
+  <TableHead>
+    <TableRow>
+      <TableCell padding="checkbox" />
+      <TableCell>Номенклатура</TableCell>
+      <TableCell>Категория</TableCell>
+      <TableCell align="right">Кол-во</TableCell>
+    </TableRow>
+  </TableHead>
+  <TableBody>
+    {(selected?.lines || []).map((l: any) => {
+      const idv = Number(l.id);
+      const hasId = Number.isFinite(idv);
+      const checked = hasId && rfqLineIds.includes(idv);
+      return (
+        <TableRow key={hasId ? idv : String(l.item || Math.random())} hover>
+          <TableCell padding="checkbox">
+            <Checkbox
+              checked={checked}
+              disabled={!hasId}
+              onChange={() => {
+                if (!hasId) return;
+                setRfqLineIds((prev) =>
+                  checked ? prev.filter((x) => x !== idv) : [...prev, idv]
+                );
+              }}
+            />
+          </TableCell>
+          <TableCell>{l.item_name || l.itemName || l.item?.name || l.item || '—'}</TableCell>
+          <TableCell>{l.category_name || l.categoryName || l.item?.category_name || '—'}</TableCell>
+          <TableCell align="right">{l.qty ?? '—'}</TableCell>
+        </TableRow>
+      );
+    })}
+  </TableBody>
+</Table>
+{!canRequestRfq && selected && (
+        <Typography variant="body2" color="error">
+          КП можно запрашивать только для заявок в статусе «Черновик» или «Открыта» и при наличии позиций.
+        </Typography>
+      )}
+    </Stack>
+  </DialogContent>
+  <DialogActions>
+    <Button onClick={() => setRfqOpen(false)} disabled={rfqLoading}>
+      Отмена
+    </Button>
+    <Button
+      onClick={sendRfq}
+      variant="contained"
+      disabled={!supplierIds.length || !canRequestRfq || rfqLoading}
+    >
+      {rfqLoading ? 'Отправка…' : 'Запросить'}
+    </Button>
+  </DialogActions>
+</Dialog>
+</Grid>
     </Box >
   );
 }

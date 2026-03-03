@@ -46,6 +46,7 @@ INSTALLED_APPS = [
     "rest_framework",
     "django_filters",   # нужно для DRF-фильтрации (мы её используем ниже)
     "corsheaders",
+    "drf_spectacular",
 
     # наши
     "core",
@@ -113,6 +114,7 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
     ],
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
 }
 
 LANGUAGE_CODE = "ru"

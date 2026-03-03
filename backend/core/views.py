@@ -1,13 +1,13 @@
 """
 ViewSet'ы приложения core.
 
-Файл содержит REST‑эндпоинты для справочников: единицы измерения, поставщики и номенклатура.
+Файл содержит REST - эндпоинты для справочников: единицы измерения, поставщики и номенклатура.
 Эти ручки используются фронтендом для заполнения выпадающих списков, поиска и выбора сущностей.
 """
 
 from django.db.models import Q
 from django.core.exceptions import FieldDoesNotExist
-from rest_framework import viewsets
+from rest_framework import viewsets, permissions
 
 from core.models import Unit
 from catalog.models import Item
@@ -26,6 +26,8 @@ class UnitViewSet(viewsets.ModelViewSet):
 
     queryset = Unit.objects.all().order_by("name")
     serializer_class = UnitSerializer
+    permission_classes = [permissions.AllowAny]
+    pagination_class = None
 
 
 class SupplierViewSet(viewsets.ModelViewSet):
@@ -75,7 +77,7 @@ class SupplierViewSet(viewsets.ModelViewSet):
 
 class ItemViewSet(viewsets.ModelViewSet):
     """
-    ItemViewSet — REST‑endpoint для работы с сущностью/ресурсом SNAB.
+    ItemViewSet — REST-endpoint для работы с сущностью/ресурсом SNAB.
     По умолчанию использует сериализатор: ItemSerializer.
     Переопределяет get_queryset(): поддерживает фильтрацию/поиск по query params.
     Назначение: обеспечить единый интерфейс для операций CRUD и чтения статусов.

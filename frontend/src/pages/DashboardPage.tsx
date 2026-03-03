@@ -1,69 +1,73 @@
-/**
- * Страница "Дашборд".
- *
- * Показывает сводные метрики по закупкам и движению заявок/заказов.
- * Источник данных: api/dashboard.ts.
- */
-import React, { useEffect, useState } from 'react';
-import { Box, Card, CardContent, Typography, Grid, CircularProgress } from '@mui/material';
-import { fetchOverviewMetrics } from '../api/dashboard';
+import * as React from 'react';
+import { Box, Card, CardContent, Grid, Typography, Stack } from '@mui/material';
+import { useQuery } from '@tanstack/react-query';
+import { http, fixPath } from '../api/_http';
+import OperationalTable from '../components/dashboard/OperationalTable';
+
+type DocType = 'pr' | 'quote' | 'po' | 'shipment';
+type OpsCounts = { overdue: number; due_soon: number; ok: number; total: number };
+type OpsGroup = { label: string; counts: OpsCounts; rows: any[] };
+type OpsResponse = { generated_at: string; threshold_days: number; groups: Record<DocType, OpsGroup> };
+
+function SummaryCard({ title, counts }: { title: string; counts: OpsCounts }) {
+  return (
+    <Card>
+      <CardContent>
+        <Typography variant="subtitle2" color="text.secondary">
+          {title}
+        </Typography>
+        <Stack direction="row" spacing={2} sx={{ mt: 1 }}>
+          <Typography variant="h6" sx={{ color: 'error.main' }}>
+            {counts.overdue}
+          </Typography>
+          <Typography variant="h6" sx={{ color: 'warning.main' }}>
+            {counts.due_soon}
+          </Typography>
+          <Typography variant="h6" sx={{ color: 'success.main' }}>
+            {counts.ok}
+          </Typography>
+        </Stack>
+        <Typography variant="caption" color="text.secondary">
+          Просрочено / скоро / остальное
+        </Typography>
+      </CardContent>
+    </Card>
+  );
+}
 
 export default function DashboardPage() {
-  const [data, setData] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const q = useQuery<OpsResponse>({
+    queryKey: ['dashboard-ops'],
+    queryFn: async () => {
+      const { data } = await http.get(fixPath('/api/dashboard/ops/'));
+      return data as OpsResponse;
+    },
+  });
 
-  useEffect(() => {
-    (async () => {
-      try {
-        setLoading(true);
-        const d = await fetchOverviewMetrics();
-        setData(d);
-      } catch (e: any) {
-        setError(e?.message || 'Ошибка загрузки метрик');
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, []);
-
-  if (loading) return <Box p={3}><CircularProgress /></Box>;
-  if (error) return <Box p={3}><Typography color="error">{error}</Typography></Box>;
-
-  const cards = [
-    { title: 'Всего заявок', value: data?.purchase_requests_total },
-    { title: 'Открытые заявки', value: data?.purchase_requests_open },
-    { title: 'Ожидают заказа', value: data?.lines_waiting ?? data?.waiting_lines ?? 0 },
-    { title: 'Горят (ETA)', value: data?.hot ?? data?.sla_red ?? data?.sla_hot ?? 0 },
-    { title: 'Желтеют (ETA)', value: data?.warn ?? data?.sla_yellow ?? data?.sla_warn ?? 0 },
-    { title: 'Зелёная зона', value: data?.ok ?? data?.sla_green ?? data?.sla_ok ?? 0 },
-  ];
-
+  const g = q.data?.groups;
 
   return (
-    <Box p={2}>
-      <Typography variant="h5" gutterBottom>Дашборд снабженца</Typography>
-      <Grid container spacing={2}>
-        {cards.map((c, i) => (
-          <Grid item xs={12} sm={6} md={4} key={i}>
-            <Card variant="outlined">
-              <CardContent>
-                <Typography variant="subtitle2" color="text.secondary">{c.title}</Typography>
-                <Typography variant="h5">{c.value ?? '—'}</Typography>
-              </CardContent>
-            </Card>
-          </Grid>
-        ))}
+    <Box>
+      <Typography variant="h5" sx={{ mb: 2 }}>
+        Дашборд
+      </Typography>
+
+      <Grid container spacing={2} sx={{ mb: 2 }}>
+        <Grid item xs={12} sm={6} md={3}>
+          <SummaryCard title="Заявки" counts={g?.pr?.counts || { overdue: 0, due_soon: 0, ok: 0, total: 0 }} />
+        </Grid>
+        <Grid item xs={12} sm={6} md={3}>
+          <SummaryCard title="КП" counts={g?.quote?.counts || { overdue: 0, due_soon: 0, ok: 0, total: 0 }} />
+        </Grid>
+        <Grid item xs={12} sm={6} md={3}>
+          <SummaryCard title="Заказы" counts={g?.po?.counts || { overdue: 0, due_soon: 0, ok: 0, total: 0 }} />
+        </Grid>
+        <Grid item xs={12} sm={6} md={3}>
+          <SummaryCard title="Доставки" counts={g?.shipment?.counts || { overdue: 0, due_soon: 0, ok: 0, total: 0 }} />
+        </Grid>
       </Grid>
 
-      <Box mt={3}>
-        <Card variant="outlined">
-          <CardContent>
-            <Typography variant="subtitle1" gutterBottom>Сырые метрики (для отладки)</Typography>
-            <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{JSON.stringify(data, null, 2)}</pre>
-          </CardContent>
-        </Card>
-      </Box>
+      <OperationalTable />
     </Box>
   );
 }

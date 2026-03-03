@@ -19,6 +19,8 @@ class Project(models.Model):
     name = models.CharField("Название проекта", max_length=255)
     status = models.CharField("Статус", max_length=20, choices=Status.choices, default=Status.PLANNED)
     description = models.TextField("Описание", blank=True, default="")
+
+    delivery_address = models.TextField("Адрес доставки", blank=True, default="")
     
     template = models.ForeignKey(
         "projects.StageTemplate",

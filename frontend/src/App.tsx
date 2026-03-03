@@ -13,6 +13,7 @@ import {
   Route,
   Link,
   Navigate,
+  useNavigate,
 } from 'react-router-dom';
 import {
   AppBar,
@@ -37,6 +38,7 @@ import PurchaseOrdersPage from './pages/PurchaseOrdersPage';
 
 // КП и Доставки
 import QuotationsPage from './pages/QuotationsPage';
+import QuotationDetailPage from './pages/QuotationDetailPage';
 import ShipmentsPage from './pages/ShipmentsPage';
 
 // Справочники (Reference)
@@ -50,6 +52,7 @@ import SupplierCreatePage from './pages/reference/SupplierCreatePage';
 import SupplierEditPage from './pages/reference/SupplierEditPage';
 import PriceImportPage from './pages/reference/PriceImportPage';
 import SupplierPriceListsPage from './pages/reference/SupplierPriceListsPage';
+import SupplierPriceListDetailPage from './pages/reference/SupplierPriceListDetailPage';
 
 // Инициализация CSRF
 // setupCsrfInterceptor();
@@ -190,12 +193,17 @@ export default function App() {
 
           {/* 3. КП (Quotations / RFQ ответы) */}
           <Route path="/quotes" element={<QuotationsPage />} />
+          <Route path="/quotes/:id" element={<QuotationDetailPage />} />
 
           {/* 4. Заказы (Purchase Orders) */}
           <Route path="/po" element={<PurchaseOrdersPage />} />
 
           {/* 5. Доставки (Shipments) */}
           <Route path="/shipments" element={<ShipmentsPage />} />
+
+          {/* 6. Прайс-листы (Price-lists) */}
+          <Route path="/price-lists" element={<SupplierPriceListsPage />} />
+          <Route path="/price-lists/:id" element={<SupplierPriceListDetailPage />} />
 
           {/* ===== СПРАВОЧНИКИ ===== */}
 

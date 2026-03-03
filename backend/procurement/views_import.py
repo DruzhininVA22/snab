@@ -142,7 +142,7 @@ def import_price_excel(request):
 
 
         sku = str(sku_raw).strip()
-        item_id = resolve_item_id_by_supplier_context(supplier_name, sku)
+        item_id, _conf = resolve_item_id_by_supplier_context(supplier_name, sku)
 
 
         candidates = []
@@ -200,11 +200,10 @@ def import_price_excel(request):
         for r in valid_rows:
             PriceRecord.objects.create(
                 item_id=r["item"],
-                supplier_id=Supplier.objects.only('id').get(name=r["supplier"]).id if r["supplier"] else None,
+                supplier=Supplier.objects.get_or_create(name=r["supplier"])[0],
                 price=r["price"],
                 currency=r["currency"],
-                dt=r["dt"],
-                pack_qty=r["pack_qty"],
+                                pack_qty=r["pack_qty"],
                 lead_days=r["lead_days"],
                 moq_qty=r["moq_qty"],
                 lot_step=r["lot_step"],

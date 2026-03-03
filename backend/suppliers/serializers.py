@@ -14,6 +14,7 @@ from .models import (
     SupplierContact,
     SupplierTerms,
     SupplierPriceList,
+    SupplierPriceLine,
 )
 
 # ============================================================
@@ -382,3 +383,46 @@ class SupplierPriceListDetailSerializer(serializers.ModelSerializer):
             "created_at",
         ]
         read_only_fields = ["created_at"]
+
+class SupplierPriceLineSerializer(serializers.ModelSerializer): 
+    unit_name = serializers.CharField(source='unit.name', read_only=True) 
+    item_sku = serializers.CharField(source='item.sku', read_only=True) 
+    item_name = serializers.CharField(source='item.name', read_only=True)
+
+    class Meta: 
+        model = SupplierPriceLine 
+        fields = ['id', 
+                  'pricelist', 
+                  'item', 
+                  'item_sku',
+                  'item_name', 
+                  'supplier_sku', 
+                  'unit', 
+                  'unit_name', 
+                  'price', 
+                  'min_quantity', 
+                  'lead_time_days', 
+                  'notes'
+                  ] 
+        
+class SupplierPriceListSerializer(serializers.ModelSerializer): 
+    supplier_name = serializers.CharField(source='supplier.name', read_only=True) 
+    lines = SupplierPriceLineSerializer(many=True, read_only=True) 
+    
+    class Meta: 
+        model = SupplierPriceList 
+        fields = ['id', 
+                  'supplier', 
+                  'supplier_name', 
+                  'title', 
+                  'version', 
+                  'valid_from', 
+                  'expiry_date', 
+                  'currency', 
+                  'is_active', 
+                  'comment', 
+                  'created_at', 
+                  'updated_at', 
+                  'lines'
+                  ]
+        read_only_fields = ['created_at', 'updated_at']

@@ -10,13 +10,14 @@ from django.db.models import Q
 from rest_framework import permissions, viewsets
 from rest_framework.response import Response
 
-from .models import Supplier
+from .models import Supplier, SupplierPriceList, SupplierPriceLine
 from .serializers import (
     SupplierListSerializer,
     SupplierDetailSerializer,
     SupplierWriteSerializer,
+    SupplierPriceListSerializer, 
+    SupplierPriceLineSerializer,
 )
-
 
 class SupplierViewSet(viewsets.ModelViewSet):
     """
@@ -133,3 +134,11 @@ class SupplierViewSet(viewsets.ModelViewSet):
         """
         kwargs["partial"] = True
         return self.update(request, *args, **kwargs)
+
+class SupplierPriceListViewSet(viewsets.ModelViewSet): 
+    queryset = SupplierPriceList.objects.all() 
+    serializer_class = SupplierPriceListSerializer 
+    
+class SupplierPriceLineViewSet(viewsets.ModelViewSet): 
+    queryset = SupplierPriceLine.objects.all() 
+    serializer_class = SupplierPriceLineSerializer

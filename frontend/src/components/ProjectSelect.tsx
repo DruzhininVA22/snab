@@ -13,6 +13,23 @@ import { http, fixPath } from '../api/_http';
 
 type Project = { id:number; name:string; code?:string };
 
+
+async function fetchProjectById(id: number) {
+  const endpoints = [
+    `/api/projects/${id}/`,            // legacy/expected
+    `/api/projects/projects/${id}/`,   // current backend router
+  ];
+  for (const ep of endpoints) {
+    try {
+      const { data } = await http.get(fixPath(ep));
+      return data;
+    } catch (e) {
+      // try next
+    }
+  }
+  return null;
+}
+
 export default function ProjectSelect({ value, onChange, disabled, label }:{
   value: number | null; onChange: (id:number|null)=>void; disabled?: boolean; label?: string;
 }) {
@@ -37,7 +54,8 @@ export default function ProjectSelect({ value, onChange, disabled, label }:{
     if (!value || options.some(o=> o.id===value)) return;
     let alive = true;
     (async ()=>{
-      try { const { data } = await http.get(fixPath(`/api/projects/${value}/`));
+      try { const data = await fetchProjectById(value);
+            if (!data) return;
             const pr = { id: data.id, name: data.name ?? String(data.id), code: data.code };
             if (alive) setOptions(prev => [pr, ...prev]); } catch {}
     })();

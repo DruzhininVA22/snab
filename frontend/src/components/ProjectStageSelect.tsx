@@ -31,6 +31,25 @@ async function tryEndpoints(projectId:number, q:string) {
   return [];
 }
 
+
+async function fetchStageById(id: number) {
+  const endpoints = [
+    `/api/projects/stages/${id}/`,
+    `/api/projects/project-stages/${id}/`,
+    `/api/projects/projectstages/${id}/`,
+    `/api/projects/stage/${id}/`,
+  ];
+  for (const ep of endpoints) {
+    try {
+      const { data } = await http.get(fixPath(ep));
+      return data;
+    } catch (e) {
+      // try next
+    }
+  }
+  return null;
+}
+
 export default function ProjectStageSelect({ projectId, value, onChange, disabled, label }:{
   projectId: number | null; value: number | null; onChange:(id:number|null)=>void; disabled?: boolean; label?: string;
 }) {
@@ -46,6 +65,22 @@ export default function ProjectStageSelect({ projectId, value, onChange, disable
   }, []);
 
   React.useEffect(()=> { if (open) { const h = window.setTimeout(()=> load(input.trim(), projectId), 200); return ()=> window.clearTimeout(h);} }, [open, input, projectId, load]);
+
+React.useEffect(() => {
+  if (!value) return;
+  if (options.some((o) => o.id === value)) return;
+  let alive = true;
+  (async () => {
+    const data = await fetchStageById(value);
+    if (!data || !alive) return;
+    const st = { id: data.id, name: data.name ?? String(data.id), code: data.code };
+    setOptions((prev) => [st, ...prev]);
+  })();
+  return () => {
+    alive = false;
+  };
+}, [value, options]);
+
 
   const val = value != null ? options.find(o=> o.id===value) || null : null;
   const getLabel = (o:Stage)=> (o.code ? `${o.code} — ${o.name}` : o.name);
