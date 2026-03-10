@@ -40,6 +40,7 @@ import PurchaseOrdersPage from './pages/PurchaseOrdersPage';
 import QuotationsPage from './pages/QuotationsPage';
 import QuotationDetailPage from './pages/QuotationDetailPage';
 import ShipmentsPage from './pages/ShipmentsPage';
+import ShipmentDetailPage from './pages/ShipmentDetailPage';
 
 // Справочники (Reference)
 import ProjectsPage from './pages/reference/ProjectsPage';
@@ -199,6 +200,7 @@ export default function App() {
           <Route path="/po" element={<PurchaseOrdersPage />} />
 
           {/* 5. Доставки (Shipments) */}
+          <Route path="/shipments/:id" element={<ShipmentDetailPage />} />
           <Route path="/shipments" element={<ShipmentsPage />} />
 
           {/* 6. Прайс-листы (Price-lists) */}

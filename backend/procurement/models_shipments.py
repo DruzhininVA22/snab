@@ -17,6 +17,25 @@ class Shipment(models.Model):
         verbose_name="Заказ поставщику",
     )
 
+    # Снимок реквизитов (Проект/Этап) на уровне доставки.
+    # Доставка — конечный документ, поэтому важно хранить привязку явно.
+    project = models.ForeignKey(
+        "projects.Project",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="shipments",
+        verbose_name="Проект",
+    )
+    project_stage = models.ForeignKey(
+        "projects.ProjectStage",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="shipments",
+        verbose_name="Этап проекта",
+    )
+
     number = models.CharField("№ доставки", max_length=64, blank=True, default="")
     status = models.CharField("Статус", max_length=20, choices=Status.choices, default=Status.PLANNED)
 

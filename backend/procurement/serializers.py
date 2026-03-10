@@ -137,21 +137,71 @@ class PurchaseRequestLineSerializer(serializers.ModelSerializer):
 # ============================================================
 
 class PurchaseRequestSerializer(serializers.ModelSerializer):
-    """Read - сериализатор заявки на закупку."""
+    """Read - сериализатор заявки на закупку.
+
+    Важно: проект/этап в заявке nullable, а проект может быть задан как напрямую (project),
+    так и через выбранный этап (project_stage). Поэтому все поля ниже — безопасные.
+    """
 
     lines = PurchaseRequestLineSerializer(many=True, read_only=True)
-    project_id = serializers.IntegerField(
-        source="project_stage.project.id", read_only=True, allow_null=True
-    )
-    project_stage_id = serializers.IntegerField(
-        source="project_stage.id", read_only=True, allow_null=True
-    )
-    project_name = serializers.CharField(
-        source="project_stage.project.name", read_only=True
-    )
-    stage_name = serializers.CharField(
-        source="project_stage.name", read_only=True
-    )
+
+    project_id = serializers.SerializerMethodField()
+    project_name = serializers.SerializerMethodField()
+    project_address = serializers.SerializerMethodField()
+    # Два поля для совместимости:
+    # - stage_id (фронт)
+    # - project_stage_id (исторически)
+    stage_id = serializers.SerializerMethodField()
+    project_stage_id = serializers.SerializerMethodField()
+    stage_name = serializers.SerializerMethodField()
+
+    def _get_stage(self, obj: PurchaseRequest):
+        try:
+            return getattr(obj, "project_stage", None)
+        except Exception:
+            return None
+
+    def _get_project(self, obj: PurchaseRequest):
+        # 1) напрямую в заявке
+        try:
+            if getattr(obj, "project", None):
+                return obj.project
+        except Exception:
+            pass
+        # 2) через этап
+        st = self._get_stage(obj)
+        try:
+            if st and getattr(st, "project", None):
+                return st.project
+        except Exception:
+            pass
+        return None
+
+    def get_project_id(self, obj: PurchaseRequest):
+        p = self._get_project(obj)
+        return getattr(p, "id", None) if p else None
+
+    def get_project_name(self, obj: PurchaseRequest):
+        p = self._get_project(obj)
+        return getattr(p, "name", None) if p else None
+
+    def get_project_address(self, obj: PurchaseRequest):
+        p = self._get_project(obj)
+        if not p:
+            return None
+        return (getattr(p, "delivery_address", None) or "").strip() or None
+
+    def get_stage_id(self, obj: PurchaseRequest):
+        st = self._get_stage(obj)
+        return getattr(st, "id", None) if st else None
+
+    def get_project_stage_id(self, obj: PurchaseRequest):
+        # alias
+        return self.get_stage_id(obj)
+
+    def get_stage_name(self, obj: PurchaseRequest):
+        st = self._get_stage(obj)
+        return getattr(st, "name", None) if st else None
 
     class Meta:
         model = PurchaseRequest
@@ -159,7 +209,9 @@ class PurchaseRequestSerializer(serializers.ModelSerializer):
             "id",
             "project_id",
             "project_stage_id",
+            "stage_id",
             "project_name",
+            "project_address",
             "stage_name",
             "status",
             "requested_by",
@@ -388,6 +440,67 @@ class PurchaseOrderSerializer(serializers.ModelSerializer):
     lines = PurchaseOrderLineSerializer(many=True, read_only=True)
     supplier_name = serializers.CharField(source="supplier.name", read_only=True)
 
+    # Для MVP важно стабильно показывать проект/этап в Заказах и Доставках.
+    # Проект/этап могут быть сохранены как "снимок" в самом заказе, либо приходить из заявки.
+    # Всё nullable → используем безопасные accessors.
+    purchase_request_id = serializers.SerializerMethodField()
+    project_id = serializers.SerializerMethodField()
+    project_name = serializers.SerializerMethodField()
+    stage_id = serializers.SerializerMethodField()
+    stage_name = serializers.SerializerMethodField()
+
+    def _get_pr(self, obj: PurchaseOrder):
+        try:
+            return obj.purchase_request
+        except Exception:
+            return None
+
+    def _get_project(self, obj: PurchaseOrder):
+        # 1) снимок в заказе
+        try:
+            if getattr(obj, "project", None):
+                return obj.project
+        except Exception:
+            pass
+        # 2) через заявку
+        pr = self._get_pr(obj)
+        if not pr:
+            return None
+        if getattr(pr, "project", None):
+            return pr.project
+        # Если по ошибке/данным заполнен только этап — проект берём из этапа.
+        st = getattr(pr, "project_stage", None)
+        return getattr(st, "project", None) if st else None
+
+    def _get_stage(self, obj: PurchaseOrder):
+        try:
+            if getattr(obj, "project_stage", None):
+                return obj.project_stage
+        except Exception:
+            pass
+        pr = self._get_pr(obj)
+        return getattr(pr, "project_stage", None) if pr else None
+
+    def get_purchase_request_id(self, obj: PurchaseOrder):
+        pr = self._get_pr(obj)
+        return getattr(pr, "id", None) if pr else None
+
+    def get_project_id(self, obj: PurchaseOrder):
+        p = self._get_project(obj)
+        return getattr(p, "id", None) if p else None
+
+    def get_project_name(self, obj: PurchaseOrder):
+        p = self._get_project(obj)
+        return getattr(p, "name", None) if p else None
+
+    def get_stage_id(self, obj: PurchaseOrder):
+        st = self._get_stage(obj)
+        return getattr(st, "id", None) if st else None
+
+    def get_stage_name(self, obj: PurchaseOrder):
+        st = self._get_stage(obj)
+        return getattr(st, "name", None) if st else None
+
     class Meta:
         model = PurchaseOrder
 
@@ -397,6 +510,11 @@ class PurchaseOrderSerializer(serializers.ModelSerializer):
             "supplier",
             "supplier_name",
             "status",
+            "purchase_request_id",
+            "project_id",
+            "project_name",
+            "stage_id",
+            "stage_name",
             "deadline",
             "planned_delivery_date",
             "delivery_address",
@@ -495,6 +613,15 @@ class QuoteSerializer(serializers.ModelSerializer):
     currency = serializers.SerializerMethodField()
     total_price = serializers.SerializerMethodField()
 
+    project_id = serializers.SerializerMethodField()
+    project_stage_id = serializers.SerializerMethodField()
+    project_name = serializers.SerializerMethodField()
+    project_address = serializers.SerializerMethodField()
+    stage_name = serializers.SerializerMethodField()
+
+    purchase_order_id = serializers.SerializerMethodField()
+    purchase_order_number = serializers.SerializerMethodField()
+
     def get_rfq_id(self, obj):
         return 0
 
@@ -549,6 +676,84 @@ class QuoteSerializer(serializers.ModelSerializer):
             total += (ql.price or Decimal("0")) * q
         return total
 
+    def _get_pr(self, obj):
+        try:
+            return obj.purchase_request
+        except Exception:
+            return None
+
+    def get_project_stage_id(self, obj):
+        pr = self._get_pr(obj)
+        return getattr(pr, "project_stage_id", None) if pr else None
+
+    def get_project_id(self, obj):
+        pr = self._get_pr(obj)
+        if not pr:
+            return None
+        pr_project_id = getattr(pr, "project_id", None)
+        if pr_project_id:
+            return pr_project_id
+        st = getattr(pr, "project_stage", None)
+        return getattr(getattr(st, "project", None), "id", None) if st else None
+
+    def get_project_name(self, obj):
+        pr = self._get_pr(obj)
+        if not pr:
+            return None
+        project = getattr(pr, "project", None)
+        if project is None:
+            st = getattr(pr, "project_stage", None)
+            project = getattr(st, "project", None) if st else None
+        if not project:
+            return None
+        code = getattr(project, "code", None)
+        name = getattr(project, "name", None) or ""
+        if code:
+            return f"{code} — {name}".strip(" —")
+        return name or f"#{getattr(project, 'id', '')}"
+
+
+    def get_project_address(self, obj):
+        pr = self._get_pr(obj)
+        if not pr:
+            return None
+        project = getattr(pr, "project", None)
+        if project is None:
+            st = getattr(pr, "project_stage", None)
+            project = getattr(st, "project", None) if st else None
+        if not project:
+            return None
+        return (getattr(project, "delivery_address", None) or "").strip() or None
+
+    def get_stage_name(self, obj):
+        pr = self._get_pr(obj)
+        if not pr:
+            return None
+        st = getattr(pr, "project_stage", None)
+        if not st:
+            return None
+        code = getattr(st, "code", None)
+        name = getattr(st, "name", None) or ""
+        if code:
+            return f"{code} — {name}".strip(" —")
+        return name or f"#{getattr(st, 'id', '')}"
+
+    def _get_latest_purchase_order(self, obj):
+        """Возвращает последний заказ, сформированный из этого КП (если есть)."""
+        try:
+            qs = obj.purchase_orders.all().order_by("-id")
+            return qs.first()
+        except Exception:
+            return None
+
+    def get_purchase_order_id(self, obj):
+        po = self._get_latest_purchase_order(obj)
+        return getattr(po, "id", None) if po else None
+
+    def get_purchase_order_number(self, obj):
+        po = self._get_latest_purchase_order(obj)
+        return getattr(po, "number", None) if po else None
+
     class Meta:
         model = Quote
         fields = [
@@ -557,6 +762,11 @@ class QuoteSerializer(serializers.ModelSerializer):
             "supplier_name",
             "purchase_request",
             "purchase_request_id",
+            "project_id",
+            "project_stage_id",
+            "project_name",
+            "project_address",
+            "stage_name",
             "rfq_id",
             "status",
             "total_price",
@@ -564,6 +774,8 @@ class QuoteSerializer(serializers.ModelSerializer):
             "delivery_days",
             "notes",
             "received_at",
+            "purchase_order_id",
+            "purchase_order_number",
             "created_at",
             "lines",
         ]

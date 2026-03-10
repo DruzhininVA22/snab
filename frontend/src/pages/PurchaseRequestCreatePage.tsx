@@ -58,6 +58,7 @@ export default function PurchaseRequestCreatePage() {
 
   const [loading, setLoading] = React.useState(false);
   const [comment, setComment] = React.useState('');
+  const [deadline, setDeadline] = React.useState<string>('');
   const prefill = useQueryPrefill();
   const [projectId, setProjectId] = React.useState<number | null>(prefill.project ?? null);
   const [stageId, setStageId] = React.useState<number | null>(prefill.stage ?? null);
@@ -70,7 +71,7 @@ export default function PurchaseRequestCreatePage() {
   const [pickIdx, setPickIdx] = React.useState<number | null>(null);
 
   const addLine = () => setLines(prev => [...prev, { item: null, qty: 1 }]);
-  const canSave = !!projectId && !!stageId && lines.some(l => l.item != null && l.qty > 0);
+  const canSave = !!projectId && !!stageId && !!deadline && lines.some(l => l.item != null && l.qty > 0);
 
   React.useEffect(() => {
     // подгрузка единиц
@@ -105,13 +106,21 @@ export default function PurchaseRequestCreatePage() {
     }) : r));
   };
 
+  const deadlineToIso = (d: string): string | null => {
+    if (!d) return null;
+    // Храним дедлайн как DateTime, но вводим как date. Чтобы не было сдвига на день из-за TZ — ставим полдень UTC.
+    return `${d}T12:00:00Z`;
+  };
+
   const save = async () => {
     if (!canSave) return;
     setSaving(true);
     try {
       const payload: any = {
         comment: comment,
+        project_id: projectId,
         project_stage_id: stageId,
+        deadline: deadlineToIso(deadline),
         lines: lines
           .filter(l => l.item !== null && l.qty > 0)
           .map(l => ({
@@ -160,6 +169,17 @@ export default function PurchaseRequestCreatePage() {
             value={comment}
             onChange={(e) => setComment(e.target.value)}
             sx={{ mb: 2 }}
+          />
+
+          <TextField
+            label="Дедлайн"
+            type="date"
+            size="small"
+            fullWidth
+            value={deadline}
+            onChange={(e) => setDeadline(e.target.value)}
+            sx={{ mb: 2, maxWidth: 260 }}
+            InputLabelProps={{ shrink: true }}
           />
 
           <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>

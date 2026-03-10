@@ -78,7 +78,7 @@ class ProjectListSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Project
-        fields = ['id', 'code', 'name', 'status', 'start_date', 'end_date']
+        fields = ['id', 'code', 'name', 'status', 'delivery_address', 'start_date', 'end_date']
 
 
 class ProjectDetailSerializer(serializers.ModelSerializer):
@@ -105,7 +105,7 @@ class ProjectDetailSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = Project
-        fields = ['id', 'code', 'name', 'status', 'description', 'start_date', 'end_date', 'stages', 'tasks', 'created_at', 'updated_at']
+        fields = ['id', 'code', 'name', 'status', 'description', 'delivery_address', 'start_date', 'end_date', 'stages', 'tasks', 'created_at', 'updated_at']
         read_only_fields = ['created_at', 'updated_at']
 
 class ProjectSerializer(serializers.ModelSerializer):
@@ -116,7 +116,7 @@ class ProjectSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Project
-        fields = ["id", "code", "name", "status", "start_date", "end_date", "description"]
+        fields = ["id", "code", "name", "status", "description", "delivery_address", "start_date", "end_date", "template"]
 
 class StageTemplateLineSerializer(serializers.ModelSerializer):
     class Meta:

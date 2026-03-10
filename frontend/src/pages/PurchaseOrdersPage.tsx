@@ -2,8 +2,8 @@
  * Purchase Orders page (snab)
  *
  * UX:
- * - /po: left list, right info-only panel + "Открыть (редакт.)"
- * - /po?order_id=<id>: full-screen view; editing allowed only in draft
+ * - /po: реестр заказов поставщикам
+ * - /po?order_id=<id>: карточка заказа (просмотр/редактирование)
  *
  * Includes shipments split (deliveries/parties) for one PO:
  * - create shipment with ETA+address
@@ -15,6 +15,7 @@ import {
   Button,
   Card,
   CardContent,
+  Checkbox,
   Chip,
   CircularProgress,
   Dialog,
@@ -22,6 +23,11 @@ import {
   DialogContent,
   DialogTitle,
   Divider,
+  FormControl,
+  FormControlLabel,
+  InputLabel,
+  MenuItem,
+  Select,
   Grid,
   IconButton,
   Paper,
@@ -46,6 +52,7 @@ import LockOpenIcon from '@mui/icons-material/LockOpen';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { http, fixPath } from '../api/_http';
+import StatusChip, { getStatusLabel } from '../components/StatusChip';
 
 type PurchaseOrderLine = {
   id: number;
@@ -66,6 +73,9 @@ type PurchaseOrder = {
   status: string;
   created_at: string;
   updated_at: string;
+  purchase_request_id?: number | null;
+  project_name?: string | null;
+  stage_name?: string | null;
   deadline?: string | null;
   planned_delivery_date?: string | null;
   delivery_address?: string | null;
@@ -95,25 +105,14 @@ type Shipment = {
   lines?: ShipmentLine[];
 };
 
-const statusLabels: Record<string, string> = {
-  draft: 'Чернов.',
-  sent: 'Отпр.',
-  confirmed: 'Подтв.',
-  paid: 'Опл.',
-  in_transit: 'В пути',
-  delivered: 'Дост.',
-  closed: 'Закр.',
-  cancelled: 'Отменен',
-  canceled: 'Отменен',
-  pending: 'Ожидание',
-};
+// Статусы отображаем единообразно через общий компонент StatusChip
 
-const shipmentStatusLabels: Record<string, string> = {
-  planned: 'План',
-  in_transit: 'В пути',
-  delivered: 'Доставлено',
-  cancelled: 'Отменено',
-};
+function toNum(v: any): number {
+  if (v === null || v === undefined) return 0;
+  const s = String(v).trim().replace(',', '.');
+  const n = Number(s);
+  return Number.isFinite(n) ? n : 0;
+}
 
 function fmtDateTime(v?: string | null) {
   if (!v) return '—';
@@ -137,21 +136,78 @@ export default function PurchaseOrdersPage() {
   const orderIdParamRaw = searchParams.get('order_id');
   const orderIdParam = orderIdParamRaw ? Number(orderIdParamRaw) : null;
 
-  const [selectedId, setSelectedId] = React.useState<number | null>(null);
+  const prFilterRaw =
+    searchParams.get('purchase_request_id') ||
+    searchParams.get('purchase_request') ||
+    searchParams.get('pr_id');
+  const prFilter = prFilterRaw ? Number(prFilterRaw) : null;
 
-  React.useEffect(() => {
-    if (orderIdParam && Number.isFinite(orderIdParam)) setSelectedId(orderIdParam);
-  }, [orderIdParam]);
+  const goList = React.useCallback(() => {
+    const p: Record<string, string> = {};
+    if (prFilterRaw) p.purchase_request_id = String(prFilterRaw);
+    setSearchParams(p);
+  }, [prFilterRaw, setSearchParams]);
+
+  const openOrder = React.useCallback(
+    (id: number) => {
+      const p: Record<string, string> = { order_id: String(id) };
+      if (prFilterRaw) p.purchase_request_id = String(prFilterRaw);
+      setSearchParams(p);
+    },
+    [prFilterRaw, setSearchParams]
+  );
+
+  const clearFilter = React.useCallback(() => setSearchParams({}), [setSearchParams]);
 
   const ordersQ = useQuery<PurchaseOrder[]>({
-    queryKey: ['purchase-orders'],
+    queryKey: ['purchase-orders', prFilterRaw || 'all'],
     queryFn: async () => {
       const res = await http.get(fixPath('/api/procurement/purchase-orders/'));
       return Array.isArray(res.data) ? res.data : res.data?.results || [];
     },
   });
 
-  const detailId = orderIdParam ?? selectedId;
+
+const [qText, setQText] = React.useState('');
+const [statusFilter, setStatusFilter] = React.useState<string>('all');
+const STORAGE_KEY_COMPLETED = "snab.purchase_orders.showCompleted";
+const [showCompleted, setShowCompleted] = React.useState<boolean>(() => {
+  try {
+    return localStorage.getItem(STORAGE_KEY_COMPLETED) === "1";
+  } catch {
+    return false;
+  }
+});
+React.useEffect(() => {
+  try {
+    localStorage.setItem(STORAGE_KEY_COMPLETED, showCompleted ? "1" : "0");
+  } catch {
+    // ignore
+  }
+}, [showCompleted]);
+
+
+const filteredOrders = React.useMemo(() => {
+  const list = ordersQ.data || [];
+  const q = qText.trim().toLowerCase();
+  return list.filter((o) => {
+    if (prFilter && Number(o.purchase_request_id || 0) !== prFilter) return false;
+    const st = (o.status || '').toLowerCase();
+    if (statusFilter !== 'all' && st !== statusFilter) return false;
+    if (statusFilter === 'all' && !showCompleted && (st === 'delivered' || st === 'closed' || st === 'cancelled')) return false;
+    if (!q) return true;
+    const hay = `${o.number} ${o.supplier_name || ''} ${o.project_name || ''} ${o.stage_name || ''}`.toLowerCase();
+    return hay.includes(q);
+  });
+}, [ordersQ.data, qText, statusFilter, showCompleted, prFilter]);
+
+const scopeCount = React.useMemo(() => {
+  const list = ordersQ.data || [];
+  if (!prFilter) return list.length;
+  return list.filter((o) => Number(o.purchase_request_id || 0) === prFilter).length;
+}, [ordersQ.data, prFilter]);
+
+  const detailId = orderIdParam;
 
   const orderDetailQ = useQuery<PurchaseOrder | null>({
     queryKey: ['purchase-order', detailId],
@@ -178,8 +234,7 @@ export default function PurchaseOrdersPage() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['purchase-orders'] });
       qc.invalidateQueries({ queryKey: ['purchase-order'] });
-      setSelectedId(null);
-      setSearchParams({});
+      goList();
     },
     onError: (err: any) => {
       const msg = err?.response?.data?.detail || err?.response?.data || err?.message || 'Не удалось удалить заказ.';
@@ -250,20 +305,9 @@ export default function PurchaseOrdersPage() {
   const createShipmentMut = useMutation({
     mutationFn: (payload: { order: number; eta_date: string | null; address: string | null; notes?: string | null }) =>
       http.post(fixPath('/api/procurement/shipments/'), payload),
-    onSuccess: (res: any) => {
+    // ВАЖНО: навигацию делаем только после set_lines, иначе доставка открывается без состава партии.
+    onSuccess: () => {
       if (detailId) qc.invalidateQueries({ queryKey: ['shipments', detailId] });
-      // Переходим в раздел "Доставки" и автоматически открываем только что созданную доставку
-      const newId =
-        res?.data?.id ??
-        res?.data?.shipment_id ??
-        res?.data?.shipment?.id ??
-        res?.id ??
-        null;
-      if (newId) {
-        navigate(`/shipments?shipment_id=${newId}`);
-      } else {
-        navigate('/shipments');
-      }
     },
     onError: (err: any) => {
       const msg = err?.response?.data?.detail || err?.response?.data || err?.message || 'Не удалось создать доставку.';
@@ -287,16 +331,6 @@ export default function PurchaseOrdersPage() {
         'Не удалось сохранить строки доставки.';
       // eslint-disable-next-line no-alert
       alert(typeof msg === 'string' ? msg : JSON.stringify(msg));
-    },
-  });
-
-  const setShipmentStatusMut = useMutation({
-    mutationFn: (payload: { shipmentId: number; status: string }) =>
-      http.post(fixPath(`/api/procurement/shipments/${payload.shipmentId}/set_status/`), { status: payload.status }),
-    onSuccess: () => {
-      if (detailId) qc.invalidateQueries({ queryKey: ['shipments', detailId] });
-      if (detailId) qc.invalidateQueries({ queryKey: ['purchase-order', detailId] });
-      qc.invalidateQueries({ queryKey: ['purchase-orders'] });
     },
   });
 
@@ -374,7 +408,7 @@ export default function PurchaseOrdersPage() {
       if (sh.status === 'cancelled') continue;
       for (const ln of sh.lines || []) {
         const key = Number(ln.order_line_id);
-        const v = Number(ln.qty);
+        const v = toNum(ln.qty);
         if (!Number.isFinite(key) || !Number.isFinite(v)) continue;
         map[key] = (map[key] || 0) + v;
       }
@@ -382,13 +416,52 @@ export default function PurchaseOrdersPage() {
     return map;
   }, [shipments]);
 
+  const deliveredByPoLine = React.useMemo(() => {
+    const map: Record<number, number> = {};
+    for (const sh of shipments) {
+      if (sh.status !== 'delivered') continue;
+      for (const ln of sh.lines || []) {
+        const key = Number(ln.order_line_id);
+        const v = toNum(ln.qty);
+        if (!Number.isFinite(key) || !Number.isFinite(v)) continue;
+        map[key] = (map[key] || 0) + v;
+      }
+    }
+    return map;
+  }, [shipments]);
+
+  const orderCoverage = React.useMemo(() => {
+    const lines = orderDetail?.lines || [];
+    const total = lines.length || 0;
+
+    let covered = 0;
+    let fullyDelivered = 0;
+
+    for (const ln of lines) {
+      const ordered = toNum(ln.qty);
+      const allocated = toNum(allocatedByPoLine[ln.id] || 0);
+      const delivered = toNum(deliveredByPoLine[ln.id] || 0);
+
+      if (allocated > 0) covered += 1;
+
+      // qty<=0 считаем закрытым, чтобы не ломать процент
+      if (ordered <= 0 || delivered >= ordered - 1e-9) fullyDelivered += 1;
+    }
+
+    const holes = Math.max(0, total - covered);
+    const closedPct = total > 0 ? Math.round((fullyDelivered / total) * 100) : 0;
+
+    return { total, covered, holes, fullyDelivered, closedPct };
+  }, [orderDetail?.id, orderDetail?.lines, allocatedByPoLine, deliveredByPoLine]);
+
+
   const buildRowsForNewShipment = React.useCallback(() => {
     const rows = (orderDetail?.lines || []).map((ln, idx) => {
-      const ordered = Number(ln.qty);
+      const ordered = toNum(ln.qty);
       const allocated = Number(allocatedByPoLine[ln.id] || 0);
       const remaining = Math.max(0, (Number.isFinite(ordered) ? ordered : 0) - (Number.isFinite(allocated) ? allocated : 0));
       const toDeliverRaw = shipmentNewLineEdits[ln.id];
-      const toDeliver = Number(toDeliverRaw || 0);
+      const toDeliver = toNum(toDeliverRaw || 0);
       const valid = !toDeliverRaw ? true : (Number.isFinite(toDeliver) && toDeliver > 0 && toDeliver <= remaining + 1e-9);
       return {
         idx,
@@ -415,6 +488,57 @@ export default function PurchaseOrdersPage() {
     return rows;
   }, [orderDetail?.lines, allocatedByPoLine, shipmentNewLineEdits]);
 
+  const currentQtyByPoLine = React.useMemo(() => {
+    const map: Record<number, number> = {};
+    if (!editingShipment) return map;
+    for (const ln of editingShipment.lines || []) {
+      const key = Number(ln.order_line_id);
+      const v = Number(ln.qty);
+      if (!Number.isFinite(key) || !Number.isFinite(v)) continue;
+      map[key] = v;
+    }
+    return map;
+  }, [editingShipment]);
+
+  const buildRowsForEditShipment = React.useCallback(() => {
+    const rows = (orderDetail?.lines || []).map((ln, idx) => {
+      const ordered = toNum(ln.qty);
+      const allocatedAll = Number(allocatedByPoLine[ln.id] || 0); // incl current shipment
+      const current = Number(currentQtyByPoLine[ln.id] || 0);
+      const allocatedOther = Math.max(0, allocatedAll - current);
+      const remaining = Math.max(0, (Number.isFinite(ordered) ? ordered : 0) - (Number.isFinite(allocatedOther) ? allocatedOther : 0));
+      const toDeliverRaw = shipmentLineEdits[ln.id];
+      const toDeliver = toNum(toDeliverRaw || 0);
+      const valid = !toDeliverRaw ? true : (Number.isFinite(toDeliver) && toDeliver >= 0 && toDeliver <= remaining + 1e-9);
+      return {
+        idx,
+        poLineId: ln.id,
+        name: ln.item_name || ln.item_sku || String(ln.item),
+        ordered,
+        allocatedOther,
+        remaining,
+        toDeliverRaw: toDeliverRaw ?? '',
+        toDeliver,
+        valid,
+        isBlocked: !!ln.is_blocked,
+      };
+    });
+
+    rows.sort((a, b) => {
+      const sa = a.toDeliver > 0 ? 1 : 0;
+      const sb = b.toDeliver > 0 ? 1 : 0;
+      if (sa !== sb) return sb - sa;
+      return a.idx - b.idx;
+    });
+
+    return rows;
+  }, [orderDetail?.lines, allocatedByPoLine, currentQtyByPoLine, shipmentLineEdits]);
+
+
+  const editShipmentRows = editingShipment ? buildRowsForEditShipment() : [];
+  const editShipmentSelected = editShipmentRows.filter((r) => r.toDeliver > 0);
+  const editShipmentHasInvalid = editShipmentSelected.some((r) => !r.valid);
+  const canSaveShipmentEdit = !!editingShipment && !editShipmentHasInvalid;
 
   const canEditOrder = orderDetail?.status === 'draft';
 
@@ -433,76 +557,6 @@ export default function PurchaseOrdersPage() {
     }
   };
 
-  const renderInfoPanel = () => {
-    if (!selectedId) return <Typography color="text.secondary">Выберите заказ слева для просмотра</Typography>;
-    if (orderDetailQ.isLoading) return <CircularProgress size={20} />;
-    if (orderDetailQ.error) return <Typography color="error">Ошибка загрузки заказа</Typography>;
-    if (!orderDetail) return <Typography color="text.secondary">Не удалось загрузить заказ</Typography>;
-
-    return (
-      <Stack spacing={1}>
-        <Stack direction="row" justifyContent="space-between" alignItems="center">
-          <Typography variant="subtitle1" sx={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={orderDetail.number}>
-            {orderDetail.number}
-          </Typography>
-          <Chip size="small" label={statusLabels[orderDetail.status] || orderDetail.status} />
-        </Stack>
-
-        <Typography variant="body2">
-          <strong>Поставщик:</strong> {orderDetail.supplier_name || orderDetail.supplier}
-        </Typography>
-
-        <Typography variant="body2">
-          <strong>Дедлайн:</strong> {fmtDateOnly(orderDetail.deadline || null)}
-        </Typography>
-        <Typography variant="body2">
-          <strong>План. поставка:</strong> {fmtDateOnly(orderDetail.planned_delivery_date || null)}
-        </Typography>
-        <Typography variant="body2">
-          <strong>Адрес:</strong> {orderDetail.delivery_address?.trim() ? orderDetail.delivery_address : '—'}
-        </Typography>
-
-        <Button size="small" variant="outlined" onClick={() => setSearchParams({ order_id: String(orderDetail.id) })} sx={{ mt: 1 }}>
-          Открыть (редакт.)
-        </Button>
-
-        <Divider sx={{ my: 1 }} />
-
-        <Typography variant="subtitle2">Строки (просмотр)</Typography>
-        {orderDetail.lines?.length ? (
-          <Table size="small" sx={{ '& th, & td': { px: 1, py: 0.75 } }}>
-            <TableHead>
-              <TableRow>
-                <TableCell>Номенклатура</TableCell>
-                <TableCell align="right" sx={{ width: 120 }}>
-                  Кол-во
-                </TableCell>
-                <TableCell align="right" sx={{ width: 140 }}>
-                  Цена
-                </TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {orderDetail.lines.map((ln) => (
-                <TableRow key={ln.id}>
-                  <TableCell sx={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {ln.item_name || ln.item_sku || ln.item}
-                  </TableCell>
-                  <TableCell align="right">{ln.qty}</TableCell>
-                  <TableCell align="right">{ln.price}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        ) : (
-          <Typography variant="body2" color="text.secondary">
-            Нет строк
-          </Typography>
-        )}
-      </Stack>
-    );
-  };
-
   // Full-screen view
   if (orderIdParam) {
     return (
@@ -511,7 +565,7 @@ export default function PurchaseOrdersPage() {
           <CardContent>
             <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>
               <Stack direction="row" spacing={1} alignItems="center">
-                <Button startIcon={<ArrowBackIcon />} onClick={() => setSearchParams({})}>
+                <Button startIcon={<ArrowBackIcon />} onClick={goList}>
                   К списку
                 </Button>
                 <Typography variant="h6">Заказ поставщику</Typography>
@@ -530,7 +584,7 @@ export default function PurchaseOrdersPage() {
                       Отпр.
                     </Button>
                   ) : null}
-                  <Chip size="small" label={statusLabels[orderDetail.status] || orderDetail.status} />
+                  <StatusChip entity="purchase_order" status={orderDetail.status} />
                 </Stack>
               ) : null}
             </Stack>
@@ -551,6 +605,12 @@ export default function PurchaseOrdersPage() {
                   <Grid item xs={12} md={6}>
                     <Typography variant="body2">
                       <strong>Поставщик:</strong> {orderDetail.supplier_name || orderDetail.supplier}
+                    </Typography>
+                    <Typography variant="body2">
+                      <strong>Проект:</strong> {orderDetail.project_name || '—'}
+                    </Typography>
+                    <Typography variant="body2">
+                      <strong>Этап:</strong> {orderDetail.stage_name || '—'}
                     </Typography>
                     <Typography variant="body2">
                       <strong>Создан:</strong> {fmtDateTime(orderDetail.created_at)}
@@ -611,6 +671,41 @@ export default function PurchaseOrdersPage() {
                   </Grid>
                 </Grid>
 
+
+                <Card variant="outlined">
+                  <CardContent sx={{ py: 1.25, '&:last-child': { pb: 1.25 } }}>
+                    <Stack
+                      direction={{ xs: 'column', sm: 'row' }}
+                      spacing={1}
+                      alignItems={{ xs: 'flex-start', sm: 'center' }}
+                      justifyContent="space-between"
+                    >
+                      <Typography variant="subtitle2">Обеспеченность заказа</Typography>
+                      <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                        <Tooltip title="Позиции, полностью закрытые доставками со статусом «Доставлено».">
+                          <Chip
+                            size="small"
+                            color={
+                              orderCoverage.total > 0 && orderCoverage.fullyDelivered === orderCoverage.total ? 'success' : 'default'
+                            }
+                            label={`Закрыто: ${orderCoverage.fullyDelivered}/${orderCoverage.total} (${orderCoverage.closedPct}%)`}
+                          />
+                        </Tooltip>
+                        <Tooltip title="Позиции, включённые хотя бы в одну доставку (кроме «Отменено»).">
+                          <Chip size="small" label={`Покрыто: ${orderCoverage.covered}/${orderCoverage.total}`} />
+                        </Tooltip>
+                        <Tooltip title="Позиции, которые ещё не распределены ни в одну доставку. Это основная «дыра» в обеспечении.">
+                          <Chip
+                            size="small"
+                            color={orderCoverage.holes > 0 ? 'warning' : 'default'}
+                            label={`Без доставок: ${orderCoverage.holes}`}
+                          />
+                        </Tooltip>
+                      </Stack>
+                    </Stack>
+                  </CardContent>
+                </Card>
+
                 <Divider />
 
                 <Typography variant="subtitle1">Строки заказа</Typography>
@@ -621,9 +716,9 @@ export default function PurchaseOrdersPage() {
                       <TableHead>
                         <TableRow>
                           <TableCell>Номенклатура</TableCell>
-                          <TableCell align="right" sx={{ width: 140 }}>
-                            Кол-во
-                          </TableCell>
+                          <TableCell align="right" sx={{ width: 120 }}>Заказано</TableCell>
+                          <TableCell align="right" sx={{ width: 140 }}>В доставках</TableCell>
+                          <TableCell align="right" sx={{ width: 120 }}>Остаток</TableCell>
                           <TableCell align="right" sx={{ width: 160 }}>
                             Цена
                           </TableCell>
@@ -638,10 +733,49 @@ export default function PurchaseOrdersPage() {
                           const e = lineEdits[ln.id] || { qty: ln.qty, price: ln.price, is_blocked: !!ln.is_blocked };
                           const blocked = !!e.is_blocked;
 
+                          const ordered = toNum(ln.qty);
+                          const allocated = toNum(allocatedByPoLine[ln.id] || 0);
+                          const delivered = toNum(deliveredByPoLine[ln.id] || 0);
+                          const remaining = Math.max(0, ordered - allocated);
+                          const isHole = allocated <= 0;
+                          const isClosed = ordered > 0 && delivered >= ordered;
+
                           return (
                             <TableRow key={ln.id} hover>
-                              <TableCell sx={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                {ln.item_name || ln.item_sku || ln.item}
+                              <TableCell sx={{ minWidth: 0 }}>
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
+                                  <Typography
+                                    variant="body2"
+                                    sx={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                                    title={String(ln.item_name || ln.item_sku || ln.item || '')}
+                                  >
+                                    {ln.item_name || ln.item_sku || ln.item}
+                                  </Typography>
+                                  {isHole ? (
+                                    <Tooltip title="Эта позиция ещё не распределена ни в одну доставку (узкое место).">
+                                      <Chip size="small" color="warning" variant="outlined" label="Без доставки" />
+                                    </Tooltip>
+                                  ) : isClosed ? (
+                                    <Tooltip title="Позиция полностью закрыта доставками со статусом «Доставлено».">
+                                      <Chip size="small" color="success" variant="outlined" label="Закрыто" />
+                                    </Tooltip>
+                                  ) : (
+                                    <Tooltip
+                                      title={
+                                        delivered > 0
+                                          ? `Позиция частично доставлена (${delivered} из ${ordered}).`
+                                          : 'По позиции уже оформлена доставка, но она ещё не закрыта полностью.'
+                                      }
+                                    >
+                                      <Chip
+                                        size="small"
+                                        color="info"
+                                        variant="outlined"
+                                        label={delivered > 0 ? 'Частично доставлено' : 'В доставке'}
+                                      />
+                                    </Tooltip>
+                                  )}
+                                </Box>
                               </TableCell>
 
                               <TableCell align="right">
@@ -660,6 +794,23 @@ export default function PurchaseOrdersPage() {
                                 ) : (
                                   ln.qty
                                 )}
+                              </TableCell>
+
+                              <TableCell align="right">
+                                <Stack spacing={0} alignItems="flex-end">
+                                  <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                                    {allocated}
+                                  </Typography>
+                                  <Typography variant="caption" color="text.secondary">
+                                    дост: {delivered}
+                                  </Typography>
+                                </Stack>
+                              </TableCell>
+
+                              <TableCell align="right">
+                                <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                                  {remaining}
+                                </Typography>
                               </TableCell>
 
                               <TableCell align="right">
@@ -769,8 +920,9 @@ export default function PurchaseOrdersPage() {
                           <TableCell sx={{ width: 140 }}>№</TableCell>
                           <TableCell sx={{ width: 140 }}>План</TableCell>
                           <TableCell sx={{ width: 140 }}>Статус</TableCell>
+                          <TableCell sx={{ width: 260 }}>Комментарий</TableCell>
                           <TableCell>Адрес</TableCell>
-                          <TableCell align="right" sx={{ width: 310 }}>
+                          <TableCell align="right" sx={{ width: 260 }}>
                             Действия
                           </TableCell>
                         </TableRow>
@@ -778,24 +930,26 @@ export default function PurchaseOrdersPage() {
                       <TableBody>
                         {shipments.map((sh) => (
                           <TableRow key={sh.id} hover>
-                            <TableCell>{sh.number || `#${sh.id}`}</TableCell>
+                            <TableCell sx={{ whiteSpace: 'nowrap', fontWeight: 700 }}>
+                              {sh.number || `D-${sh.id}`}
+                            </TableCell>
                             <TableCell>{fmtDateOnly(sh.eta_date || null)}</TableCell>
                             <TableCell>
-                              <Chip size="small" label={shipmentStatusLabels[sh.status] || sh.status} />
+                              <StatusChip entity="shipment" status={sh.status} compact />
+                            </TableCell>
+                            <TableCell sx={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={sh.notes || ''}>
+                              {sh.notes || '—'}
                             </TableCell>
                             <TableCell sx={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={sh.address || ''}>
                               {sh.address || '—'}
                             </TableCell>
                             <TableCell align="right">
                               <Stack direction="row" spacing={1} justifyContent="flex-end">
+                                <Button size="small" variant="contained" onClick={() => navigate(`/shipments/${encodeURIComponent(String(sh.id))}`)}>
+                                  Открыть
+                                </Button>
                                 <Button size="small" variant="outlined" startIcon={<EditIcon fontSize="small" />} onClick={() => openShipmentEdit(sh)}>
                                   Разбить
-                                </Button>
-                                <Button size="small" variant="outlined" onClick={() => setShipmentStatusMut.mutate({ shipmentId: sh.id, status: 'in_transit' })}>
-                                  В пути
-                                </Button>
-                                <Button size="small" variant="outlined" onClick={() => setShipmentStatusMut.mutate({ shipmentId: sh.id, status: 'delivered' })}>
-                                  Дост.
                                 </Button>
                                 <IconButton
                                   size="small"
@@ -963,7 +1117,12 @@ export default function PurchaseOrdersPage() {
                                   notes: shipmentNotes?.trim() ? shipmentNotes.trim() : null,
                                 } as any);
 
-                                const shipmentId = res?.data?.id;
+                                const shipmentId =
+                                  res?.data?.id ??
+                                  res?.data?.shipment_id ??
+                                  res?.data?.shipment?.id ??
+                                  res?.id ??
+                                  null;
                                 if (!shipmentId) throw new Error('Shipment id not returned');
 
                                 await setShipmentLinesMut.mutateAsync({ shipmentId, lines: selectedLines });
@@ -971,6 +1130,9 @@ export default function PurchaseOrdersPage() {
                                 setShipmentCreateOpen(false);
                                 setShipmentNewLineEdits({});
                                 setShipmentNotes('');
+
+                                // Теперь можно открыть доставку (состав уже сохранён)
+                                navigate(`/shipments/${encodeURIComponent(String(shipmentId))}`);
                               } catch (e) {
                                 // errors are shown via onError
                               }
@@ -998,7 +1160,8 @@ export default function PurchaseOrdersPage() {
                 ) : (
                   <Stack spacing={1.5} sx={{ mt: 1 }}>
                     <Typography variant="body2" color="text.secondary">
-                      Укажите количества по строкам заказа для этой партии. Суммарно по всем доставкам нельзя превысить заказанное.
+                      Укажите количества по строкам заказа для этой партии. Нельзя больше остатка (Заказано − Уже распределено в других партиях).
+                      Строки с количеством &gt; 0 автоматически поднимаются вверх.
                     </Typography>
 
                     <Table size="small" sx={{ '& th, & td': { px: 1, py: 0.75 } }}>
@@ -1008,39 +1171,60 @@ export default function PurchaseOrdersPage() {
                           <TableCell align="right" sx={{ width: 140 }}>
                             Заказано
                           </TableCell>
-                          <TableCell align="right" sx={{ width: 160 }}>
-                            В этой партии
-                          </TableCell>
+                          <TableCell align="right" sx={{ width: 160 }}>Уже распределено</TableCell>
+                          <TableCell align="right" sx={{ width: 150 }}>Остаток</TableCell>
+                          <TableCell align="right" sx={{ width: 170 }}>В этой партии</TableCell>
                         </TableRow>
                       </TableHead>
                       <TableBody>
-                        {(orderDetail?.lines || []).map((ln) => (
-                          <TableRow key={ln.id}>
-                            <TableCell>{ln.item_name || ln.item_sku || ln.item}</TableCell>
-                            <TableCell align="right">{ln.qty}</TableCell>
-                            <TableCell align="right">
-                              <TextField
-                                size="small"
-                                value={shipmentLineEdits[ln.id] ?? ''}
-                                onChange={(e) =>
-                                  setShipmentLineEdits((prev) => ({
-                                    ...prev,
-                                    [ln.id]: e.target.value,
-                                  }))
-                                }
-                                inputProps={{ style: { textAlign: 'right' } }}
-                              />
-                            </TableCell>
-                          </TableRow>
-                        ))}
+                        {editShipmentRows.map((r) => {
+                          const disabled = r.isBlocked;
+                          const showError = r.toDeliver > 0 && !r.valid;
+                          return (
+                            <TableRow key={r.poLineId} hover>
+                              <TableCell sx={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.name}>
+                                {r.name}{r.isBlocked ? ' (блок)' : ''}
+                              </TableCell>
+                              <TableCell align="right">{Number.isFinite(r.ordered) ? r.ordered : '—'}</TableCell>
+                              <TableCell align="right">{Number.isFinite(r.allocatedOther) ? r.allocatedOther : 0}</TableCell>
+                              <TableCell align="right">{Number.isFinite(r.remaining) ? r.remaining : 0}</TableCell>
+                              <TableCell align="right">
+                                <TextField
+                                  size="small"
+                                  value={r.toDeliverRaw}
+                                  onChange={(e) =>
+                                    setShipmentLineEdits((prev) => ({
+                                      ...prev,
+                                      [r.poLineId]: e.target.value,
+                                    }))
+                                  }
+                                  disabled={disabled}
+                                  error={showError}
+                                  helperText={
+                                    showError
+                                      ? `Макс: ${r.remaining}`
+                                      : disabled
+                                        ? 'Строка заблокирована'
+                                        : (r.remaining <= 0 ? 'Остаток = 0' : `Макс: ${r.remaining}`)
+                                  }
+                                  inputProps={{ style: { textAlign: 'right' } }}
+                                />
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
                       </TableBody>
                     </Table>
+
+                    <Typography variant="body2" color={editShipmentHasInvalid ? 'error' : 'text.secondary'}>
+                      Выбрано строк: {editShipmentSelected.length}{editShipmentHasInvalid ? ' (есть ошибки)' : ''}
+                    </Typography>
                   </Stack>
                 )}
               </DialogContent>
               <DialogActions>
                 <Button onClick={() => setShipmentEditOpen(false)}>Отмена</Button>
-                <Button variant="contained" onClick={saveShipmentLines} disabled={!editingShipment}>
+                <Button variant="contained" onClick={saveShipmentLines} disabled={!canSaveShipmentEdit}>
                   Сохранить
                 </Button>
               </DialogActions>
@@ -1051,99 +1235,246 @@ export default function PurchaseOrdersPage() {
     );
   }
 
+
   // List view
   return (
     <Box p={2}>
-      <Typography variant="h5" gutterBottom>
-        Заказы поставщикам
-      </Typography>
+      <Stack
+        direction={{ xs: 'column', md: 'row' }}
+        spacing={1.5}
+        alignItems={{ xs: 'flex-start', md: 'center' }}
+        justifyContent="space-between"
+        sx={{ mb: 1 }}
+      >
+        <Typography variant="h5">Заказы поставщикам</Typography>
 
-      <Grid container spacing={2}>
-        <Grid item xs={12} md={8} sx={{ minWidth: 0 }}>
-          <Paper>
-            {ordersQ.isLoading ? (
-              <Box p={2} display="flex" justifyContent="center">
-                <CircularProgress />
-              </Box>
-            ) : ordersQ.error ? (
-              <Box p={2}>
-                <Typography color="error">Ошибка загрузки заказов</Typography>
-              </Box>
-            ) : (
-              <TableContainer sx={{ width: '100%', overflowX: 'hidden' }}>
-                <Table
-                  size="small"
-                  sx={{
-                    tableLayout: 'fixed',
-                    width: '100%',
-                    minWidth: 0,
-                    '& th, & td': { px: 1, py: 0.75 },
-                  }}
-                >
-                  <TableHead>
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ width: { xs: '100%', md: 'auto' } }}>
+          <TextField
+            size="small"
+            label="Поиск (номер / поставщик / проект / этап)"
+            value={qText}
+            onChange={(e) => setQText(e.target.value)}
+            sx={{ minWidth: { xs: '100%', sm: 360 } }}
+          />
+          <FormControl size="small" sx={{ minWidth: 180 }}>
+            <InputLabel id="po-status-filter-label">Статус</InputLabel>
+            <Select
+              labelId="po-status-filter-label"
+              label="Статус"
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(String(e.target.value))}
+            >
+              <MenuItem value="all">Все</MenuItem>
+              <MenuItem value="draft">{getStatusLabel('purchase_order', 'draft')}</MenuItem>
+              <MenuItem value="sent">{getStatusLabel('purchase_order', 'sent')}</MenuItem>
+              <MenuItem value="confirmed">{getStatusLabel('purchase_order', 'confirmed')}</MenuItem>
+              <MenuItem value="paid">{getStatusLabel('purchase_order', 'paid')}</MenuItem>
+              <MenuItem value="in_transit">{getStatusLabel('purchase_order', 'in_transit')}</MenuItem>
+              <MenuItem value="delivered">{getStatusLabel('purchase_order', 'delivered')}</MenuItem>
+              <MenuItem value="closed">{getStatusLabel('purchase_order', 'closed')}</MenuItem>
+              <MenuItem value="cancelled">{getStatusLabel('purchase_order', 'cancelled')}</MenuItem>
+            </Select>
+          </FormControl>
+          <FormControlLabel
+            sx={{ ml: 0.5, userSelect: 'none' }}
+            control={<Checkbox checked={showCompleted} onChange={(e) => setShowCompleted(e.target.checked)} />}
+            label={<Typography variant="body2">Показывать завершённые</Typography>}
+          />
+        </Stack>
+      </Stack>
+
+      <Paper>
+        {ordersQ.isLoading ? (
+          <Box p={2} display="flex" justifyContent="center">
+            <CircularProgress />
+          </Box>
+        ) : ordersQ.error ? (
+          <Box p={2}>
+            <Typography color="error">Ошибка загрузки заказов</Typography>
+          </Box>
+        ) : (
+          <>
+            <Box px={2} py={1} display="flex" justifyContent="space-between" alignItems="center">
+              <Stack direction="row" spacing={1} alignItems="center">
+                {prFilter ? (
+                  <Chip
+                    size="small"
+                    variant="outlined"
+                    label={`Фильтр: заявка #${prFilter}`}
+                    onDelete={clearFilter}
+                  />
+                ) : null}
+                <Typography variant="body2" color="text.secondary">
+                  Показано: {filteredOrders.length} / {scopeCount}
+                </Typography>
+              </Stack>
+            </Box>
+            <Divider />
+            <TableContainer sx={{ width: '100%', overflowX: 'hidden' }}>
+              <Table
+                size="small"
+                sx={{
+                  tableLayout: 'fixed',
+                  width: '100%',
+                  minWidth: 0,
+                  '& th, & td': { px: 1, py: 0.75 },
+                }}
+              >
+                <TableHead>
+                  <TableRow>
+                    <TableCell sx={{ width: 110, fontSize: 12 }}>Заказ</TableCell>
+                    <TableCell sx={{ width: 180, fontSize: 12 }}>Поставщик</TableCell>
+                    <TableCell sx={{ width: 190, fontSize: 12 }}>Проект</TableCell>
+                    <TableCell sx={{ fontSize: 12 }}>Этап</TableCell>
+                    <TableCell sx={{ width: 150, fontSize: 12 }}>Сроки</TableCell>
+                    <TableCell sx={{ width: 180, fontSize: 12 }}>Адрес</TableCell>
+                    <TableCell sx={{ width: 120, fontSize: 12 }}>Статус</TableCell>
+                    <TableCell align="right" sx={{ width: 70 }} />
+                  </TableRow>
+                </TableHead>
+
+                <TableBody>
+                  {filteredOrders.length === 0 ? (
                     <TableRow>
-                      <TableCell sx={{ width: 54, fontSize: 12 }}>ID</TableCell>
-                      <TableCell sx={{ width: 110, fontSize: 12 }}>Номер</TableCell>
-                      <TableCell sx={{ fontSize: 12 }}>Поставщик</TableCell>
-                      <TableCell sx={{ width: 110, fontSize: 12 }}>Статус</TableCell>
-                      <TableCell align="right" sx={{ width: 54 }} />
+                      <TableCell colSpan={8}>
+                        {prFilter ? (
+                            <>
+                              <Typography color="text.secondary">По заявке #{prFilter} заказов пока нет.</Typography>
+                              <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
+                                <Button
+                                  size="small"
+                                  variant="outlined"
+                                  onClick={() => navigate(fixPath(`/quotes?purchase_request_id=${prFilter}`))}
+                                >
+                                  КП по заявке
+                                </Button>
+                                <Button
+                                  size="small"
+                                  variant="text"
+                                  onClick={() => navigate(fixPath(`/pr?purchase_request_id=${prFilter}`))}
+                                >
+                                  Открыть заявку
+                                </Button>
+                              </Stack>
+                            </>
+                          ) : (
+                            <Typography color="text.secondary">Ничего не найдено</Typography>
+                          )}
+                      </TableCell>
                     </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {(ordersQ.data || []).length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={5}>
-                          <Typography color="text.secondary">Заказов пока нет</Typography>
-                        </TableCell>
-                      </TableRow>
-                    ) : null}
+                  ) : null}
 
-                    {(ordersQ.data || []).map((o) => (
-                      <TableRow
-                        key={o.id}
-                        hover
-                        selected={o.id === selectedId}
-                        onClick={() => setSelectedId(o.id)}
-                        sx={{ cursor: 'pointer' }}
-                      >
-                        <TableCell sx={{ fontSize: 12 }}>{o.id}</TableCell>
-                        <TableCell sx={{ fontSize: 12, whiteSpace: 'nowrap' }}>{o.number}</TableCell>
-                        <TableCell sx={{ fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={o.supplier_name || String(o.supplier)}>
-                          {o.supplier_name || String(o.supplier)}
-                        </TableCell>
-                        <TableCell>
-                          <Chip size="small" label={statusLabels[o.status] || o.status} />
-                        </TableCell>
-                        <TableCell align="right">
-                          <Tooltip title="Удалить заказ">
-                            <IconButton
-                              size="small"
-                              color="error"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                if (!confirm(`Удалить заказ ${o.number}?`)) return;
-                                deleteMut.mutate(o.id);
-                              }}
-                            >
-                              <DeleteIcon fontSize="small" />
-                            </IconButton>
-                          </Tooltip>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </TableContainer>
-            )}
-          </Paper>
-        </Grid>
+                  {filteredOrders.map((o) => (
+                    <TableRow
+                      key={o.id}
+                      hover
+                      onClick={() => openOrder(o.id)}
+                      sx={{ cursor: 'pointer' }}
+                    >
+                      <TableCell sx={{ fontSize: 12 }}>
+                        <Button
+                          variant="text"
+                          size="small"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openOrder(o.id);
+                          }}
+                          sx={{
+                            minWidth: 0,
+                            px: 0,
+                            textTransform: 'none',
+                            fontWeight: 700,
+                            lineHeight: 1.2,
+                          }}
+                        >
+                          {o.number}
+                        </Button>
+                      </TableCell>
 
-        <Grid item xs={12} md={4} sx={{ minWidth: 0 }}>
-          <Card>
-            <CardContent>{renderInfoPanel()}</CardContent>
-          </Card>
-        </Grid>
-      </Grid>
+                      <TableCell sx={{ fontSize: 12 }}>
+                        <Tooltip title={o.supplier_name || String(o.supplier)}>
+                          <Box sx={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {o.supplier_name || String(o.supplier)}
+                          </Box>
+                        </Tooltip>
+                      </TableCell>
+
+                      <TableCell sx={{ fontSize: 12 }}>
+                        <Tooltip title={o.project_name || '—'}>
+                          <Box
+                            sx={{
+                              display: '-webkit-box',
+                              WebkitBoxOrient: 'vertical',
+                              WebkitLineClamp: 2,
+                              overflow: 'hidden',
+                            }}
+                          >
+                            {o.project_name || '—'}
+                          </Box>
+                        </Tooltip>
+                      </TableCell>
+
+                      <TableCell sx={{ fontSize: 12 }}>
+                        <Tooltip title={o.stage_name || '—'}>
+                          <Box
+                            sx={{
+                              display: '-webkit-box',
+                              WebkitBoxOrient: 'vertical',
+                              WebkitLineClamp: 2,
+                              overflow: 'hidden',
+                            }}
+                          >
+                            {o.stage_name || '—'}
+                          </Box>
+                        </Tooltip>
+                      </TableCell>
+
+                      <TableCell sx={{ fontSize: 12 }}>
+                        <Box>
+                          <Typography variant="body2" sx={{ fontSize: 12, lineHeight: 1.25 }}>
+                            План: {fmtDateOnly(o.planned_delivery_date || null)}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.25 }}>
+                            Дедл: {fmtDateOnly(o.deadline || null)}
+                          </Typography>
+                        </Box>
+                      </TableCell>
+
+                      <TableCell sx={{ fontSize: 12 }}>
+                        <Tooltip title={(o.delivery_address || '').trim() || '—'}>
+                          <Box sx={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {(o.delivery_address || '').trim() || '—'}
+                          </Box>
+                        </Tooltip>
+                      </TableCell>
+
+                      <TableCell>
+                        <StatusChip entity="purchase_order" status={o.status} compact />
+                      </TableCell>
+
+                      <TableCell align="right">
+                        <Tooltip title="Удалить заказ">
+                          <IconButton
+                            size="small"
+                            color="error"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (!confirm(`Удалить заказ ${o.number}?`)) return;
+                              deleteMut.mutate(o.id);
+                            }}
+                          >
+                            <DeleteIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          </>
+        )}
+      </Paper>
     </Box>
   );
 }

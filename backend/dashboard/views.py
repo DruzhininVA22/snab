@@ -86,28 +86,13 @@ def _calc_severity(deadline_iso: Optional[str]) -> Tuple[str, Optional[int]]:
     if timezone.is_naive(dt):
         dt = timezone.make_aware(dt)
 
-    # Business days (Mon–Fri): count days in (today, deadline] excluding today, including deadline.
+    # Calendar days: simple and predictable for users.
+    # IMPORTANT: compare *dates*, not datetimes, otherwise the UI will show off-by-one near midnight
+    # (e.g. deadline == today might become -1 when deadline stored as 00:00 and "now" is later).
     today = timezone.localdate()
-    deadline_date = dt.date()
+    deadline_date = timezone.localdate(dt)
 
-    def business_days_diff(a: date, b: date) -> int:
-        if a == b:
-            return 0
-        sign = 1 if b > a else -1
-        start, end = (a, b) if sign == 1 else (b, a)
-
-        delta = (end - start).days
-        full_weeks = delta // 7
-        bd = full_weeks * 5
-        rem = delta % 7
-        start_wd = start.weekday()  # Mon=0..Sun=6
-        for i in range(1, rem + 1):
-            wd = (start_wd + i) % 7
-            if wd < 5:
-                bd += 1
-        return sign * bd
-
-    days_left = business_days_diff(today, deadline_date)
+    days_left = (deadline_date - today).days
     if days_left < 0:
         return "overdue", days_left
     if days_left <= THRESHOLD_DAYS:
@@ -183,7 +168,7 @@ def _frontend_url(kind: str, oid: int) -> str:
     return "/"
 
 
-def _iter_rows(kind: str, qs) -> List[Dict[str, Any]]:
+def _iter_rows(kind: str, qs, include_done: bool = False) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     for obj in qs[:200]:
         oid = getattr(obj, "id", None)
@@ -191,7 +176,7 @@ def _iter_rows(kind: str, qs) -> List[Dict[str, Any]]:
             continue
 
         st = _status(obj).lower()
-        if st in DONE_STATUSES.get(kind, set()):
+        if (not include_done) and st in DONE_STATUSES.get(kind, set()):
             continue
 
         deadline_iso = _get_deadline_iso(obj, kind)
@@ -235,6 +220,8 @@ class DashboardOpsView(APIView):
         errors: Dict[str, str] = {}
         groups: Dict[str, Dict[str, Any]] = {}
 
+        include_done = str(request.query_params.get("include_done", "")).lower() in ("1", "true", "yes", "y", "on")
+
         PR = _safe_model("procurement", "PurchaseRequest")
         Quote = _safe_model("procurement", "Quote")
         PO = _safe_model("procurement", "PurchaseOrder")
@@ -252,24 +239,24 @@ class DashboardOpsView(APIView):
                     qs = qs.select_related("project")
                 except Exception:
                     pass
-            pr_rows = _iter_rows("pr", qs)
+            pr_rows = _iter_rows("pr", qs, include_done=include_done)
 
         if Quote is None:
             errors["quote"] = "Model not found"
             quote_rows = []
         else:
-            quote_rows = _iter_rows("quote", Quote.objects.all().order_by("-id"))
+            quote_rows = _iter_rows("quote", Quote.objects.all().order_by("-id"), include_done=include_done)
 
         if PO is None:
             errors["po"] = "Model not found"
             po_rows = []
         else:
-            po_rows = _iter_rows("po", PO.objects.all().order_by("-id"))
+            po_rows = _iter_rows("po", PO.objects.all().order_by("-id"), include_done=include_done)
 
         if Shipment is None:
             shipment_rows = []
         else:
-            shipment_rows = _iter_rows("shipment", Shipment.objects.all().order_by("-id"))
+            shipment_rows = _iter_rows("shipment", Shipment.objects.all().order_by("-id"), include_done=include_done)
 
         groups["pr"] = {"label": "Заявки", "counts": _counts(pr_rows), "rows": pr_rows}
         groups["quote"] = {"label": "КП", "counts": _counts(quote_rows), "rows": quote_rows}

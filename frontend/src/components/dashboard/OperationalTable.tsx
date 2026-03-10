@@ -17,6 +17,8 @@ import {
   Stack,
   IconButton,
   Tooltip,
+  FormControlLabel,
+  Checkbox,
 } from '@mui/material';
 import { alpha, useTheme } from '@mui/material/styles';
 import RefreshIcon from '@mui/icons-material/Refresh';
@@ -151,11 +153,15 @@ function colorDistance(a: string, b: string): number | null {
 export default function OperationalTable() {
   const theme = useTheme();
   const [tab, setTab] = React.useState<DocType>('pr');
+  const LS_SHOW_DONE = 'dashboard_show_completed';
+  const [showDone, setShowDone] = React.useState<boolean>(() => {
+    try { return localStorage.getItem(LS_SHOW_DONE) === '1'; } catch { return false; }
+  });
 
   const opsQ = useQuery({
-    queryKey: ['dashboard-ops'],
+    queryKey: ['dashboard-ops', showDone],
     queryFn: async () => {
-      const { data } = await http.get(fixPath('/api/dashboard/ops/'));
+      const { data } = await http.get(fixPath(`/api/dashboard/ops/?include_done=${showDone ? 1 : 0}`));
       return data as any;
     },
   });
@@ -274,11 +280,27 @@ return (
       <CardContent>
         <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>
           <Typography variant="h6">Операционная таблица</Typography>
-          <Tooltip title="Обновить">
-            <IconButton size="small" onClick={() => opsQ.refetch()}>
-              <RefreshIcon fontSize="small" />
-            </IconButton>
-          </Tooltip>
+          <Stack direction="row" alignItems="center" spacing={1}>
+            <FormControlLabel
+              control={
+                <Checkbox
+                  size="small"
+                  checked={showDone}
+                  onChange={(e) => {
+                    const v = e.target.checked;
+                    setShowDone(v);
+                    try { localStorage.setItem(LS_SHOW_DONE, v ? '1' : '0'); } catch { }
+                  }}
+                />
+              }
+              label={<Typography variant="body2">Показывать завершённые</Typography>}
+            />
+            <Tooltip title="Обновить">
+              <IconButton size="small" onClick={() => opsQ.refetch()}>
+                <RefreshIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+          </Stack>
         </Stack>
 
         {api?.errors && Object.keys(api.errors).length ? (

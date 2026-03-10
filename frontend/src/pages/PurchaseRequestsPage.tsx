@@ -12,7 +12,7 @@ import {
   Typography, Divider, FormControl, InputLabel, Select, MenuItem, Button,
   CircularProgress,
   Dialog, DialogTitle, DialogContent, DialogActions,
-  Stack, Checkbox
+  Stack, Checkbox, FormControlLabel
 } from '@mui/material';
 import { Table, TableBody, TableCell, TableContainer, TableHead, TableRow } from '@mui/material';
 import { http, fixPath } from '../api/_http';
@@ -133,6 +133,11 @@ export default function PurchaseRequestsPage() {
   const [fltStage, setFltStage] = React.useState<number | 'all'>('all');
   const [fltStatus, setFltStatus] = React.useState<string | 'all'>('all');
 
+  const LS_SHOW_DONE = 'pr_show_completed';
+  const [showDone, setShowDone] = React.useState<boolean>(() => {
+    try { return localStorage.getItem(LS_SHOW_DONE) === '1'; } catch { return false; }
+  });
+
   const fetchProjectsList = React.useCallback(async () => {
     const tryUrls = [
       fixPath('/api/projects/projects/?page_size=1000'),
@@ -198,7 +203,11 @@ export default function PurchaseRequestsPage() {
       if (fltStatus !== 'all') params.push(`status=${encodeURIComponent(fltStatus)}`);
       const url = fixPath(`/api/procurement/purchase-requests/?${params.join('&')}`);
       const res = await http.get(url);
-      const rows = extractRows(res.data);
+      let rows = extractRows(res.data);
+      if (fltStatus === 'all' && !showDone) {
+        const done = new Set(['closed','cancelled','canceled','done']);
+        rows = rows.filter(r => !done.has(String(r.status || '').toLowerCase()));
+      }
       setList(rows);
       if (!selectedId && rows.length) setSelectedId(rows[0].id);
       if (selectedId && !rows.some(r => r.id === selectedId)) {
@@ -209,7 +218,7 @@ export default function PurchaseRequestsPage() {
     } finally {
       setLoading(false);
     }
-  }, [fltProject, fltStage, fltStatus, selectedId]);
+  }, [fltProject, fltStage, fltStatus, showDone, selectedId]);
 
   
   const canRequestRfq =
@@ -357,6 +366,21 @@ const sendRfq = async () => {
                 </Select>
               </FormControl>
 
+              <FormControlLabel
+                sx={{ ml: 0.5, mr: 0.5 }}
+                control={
+                  <Checkbox
+                    size="small"
+                    checked={showDone}
+                    onChange={(e) => {
+                      const v = e.target.checked;
+                      setShowDone(v);
+                      try { localStorage.setItem(LS_SHOW_DONE, v ? '1' : '0'); } catch { }
+                    }}
+                  />
+                }
+                label={<Typography variant="body2">Показывать завершённые</Typography>}
+              />
               <Button size="small" onClick={loadList}>Обновить</Button>
             </Box>
             <Divider sx={{ my: 1 }} />

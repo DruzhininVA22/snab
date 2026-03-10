@@ -13,7 +13,14 @@ import { useQuery } from '@tanstack/react-query';
 import { http, fixPath } from '../../api/_http';
 import CreateProjectDialog from './../projects/CreateProjectDialog';
 
-type Project = { id: number; code: string; name: string; status: string; start_date?: string | null; end_date?: string | null; };
+const PROJECT_STATUS_LABELS: Record<string, string> = {
+  planned: 'План',
+  active: 'В работе',
+  paused: 'Пауза',
+  done: 'Завершён',
+};
+
+type Project = { id: number; code: string; name: string; status: string; delivery_address?: string | null; start_date?: string | null; end_date?: string | null; };
 
 async function fetchProjects(search: string) {
   const qs = new URLSearchParams();
@@ -40,26 +47,30 @@ export default function ProjectsPage() {
       <Card variant="outlined">
         <CardContent>
           {isLoading ? <CircularProgress /> : error ? <Typography color="error">Не удалось загрузить проекты</Typography> : (
-            <Table size="small">
+            <Table size="small" sx={{ width: '100%' }}>
               <TableHead>
                 <TableRow>
-                  <TableCell>Код</TableCell>
-                  <TableCell>Название</TableCell>
-                  <TableCell>Статус</TableCell>
-                  <TableCell>Начало</TableCell>
-                  <TableCell>Завершение</TableCell>
-                  <TableCell></TableCell>
+                  <TableCell sx={{ width: '8%' }}>Код</TableCell>
+                  <TableCell sx={{ width: '18%' }}>Название</TableCell>
+                  <TableCell sx={{ width: '12%', whiteSpace: 'nowrap' }}>Статус</TableCell>
+                  <TableCell sx={{ width: '36%' }}>Адрес объекта</TableCell>
+                  <TableCell sx={{ width: '10%', whiteSpace: 'nowrap' }}>Начало</TableCell>
+                  <TableCell sx={{ width: '10%', whiteSpace: 'nowrap' }}>Завершение</TableCell>
+                  <TableCell sx={{ width: '6%' }} />
                 </TableRow>
               </TableHead>
               <TableBody>
                 {(data as Project[]).map(p => (
-                  <TableRow key={p.id}>
-                    <TableCell>{p.code}</TableCell>
-                    <TableCell>{p.name}</TableCell>
-                    <TableCell>{p.status}</TableCell>
-                    <TableCell>{p.start_date || '—'}</TableCell>
-                    <TableCell>{p.end_date || '—'}</TableCell>
-                    <TableCell><Button component={Link} to={`/reference/projects/${p.id}`} size="small">Открыть</Button></TableCell>
+                  <TableRow key={p.id} hover>
+                    <TableCell sx={{ whiteSpace: 'nowrap' }}>{p.code}</TableCell>
+                    <TableCell sx={{ whiteSpace: 'normal', wordBreak: 'break-word' }}>{p.name}</TableCell>
+                    <TableCell sx={{ whiteSpace: 'nowrap' }}>{PROJECT_STATUS_LABELS[p.status] || p.status || '—'}</TableCell>
+                    <TableCell sx={{ whiteSpace: 'normal', wordBreak: 'break-word' }}>{p.delivery_address || '—'}</TableCell>
+                    <TableCell sx={{ whiteSpace: 'nowrap' }}>{p.start_date || '—'}</TableCell>
+                    <TableCell sx={{ whiteSpace: 'nowrap' }}>{p.end_date || '—'}</TableCell>
+                    <TableCell sx={{ whiteSpace: 'nowrap', textAlign: 'right' }}>
+                      <Button component={Link} to={`/reference/projects/${p.id}`} size="small">Открыть</Button>
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>

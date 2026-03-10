@@ -150,9 +150,8 @@ export async function fetchSupplierPriceLists(
   supplierId?: number,
 ): Promise<SupplierPriceList[]> {
   const params: any = { page_size: 1000 };
-  
   if (supplierId) {
-    params.supplier = supplierId;
+    params.supplier_id = supplierId;
   }
 
   const response = await http.get('/api/procurement/supplier-price-lists/', {

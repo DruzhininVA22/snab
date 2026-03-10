@@ -8,6 +8,7 @@ API эндпоинты для работы с поставщиками.
 from django.db.models import Q
 
 from rest_framework import permissions, viewsets
+from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 
 from .models import Supplier, SupplierPriceList, SupplierPriceLine
@@ -134,6 +135,60 @@ class SupplierViewSet(viewsets.ModelViewSet):
         """
         kwargs["partial"] = True
         return self.update(request, *args, **kwargs)
+
+
+    def destroy(self, request, *args, **kwargs):
+        """
+        Защита удаления поставщика, если по нему уже есть связанные документы.
+
+        Для MVP запрещаем удаление, если поставщик уже участвует в
+        закупочном процессе или в справочнике прайс-листов.
+        """
+        supplier = self.get_object()
+
+        # Локальный импорт, чтобы не тянуть procurement на этапе импорта модуля
+        # и не словить циклические зависимости.
+        from procurement.models import (
+            PurchaseOrder,
+            Quote,
+            SupplierPriceList as ProcurementSupplierPriceList,
+            PriceRecord,
+            ItemSupplierMapping,
+        )
+
+        blockers = []
+
+        if PurchaseOrder.objects.filter(supplier_id=supplier.id).exists():
+            blockers.append("есть заказы")
+
+        if Quote.objects.filter(supplier_id=supplier.id).exists():
+            blockers.append("есть КП")
+
+        # Учитываем оба контура прайс-листов: suppliers и procurement.
+        if (
+            SupplierPriceList.objects.filter(supplier_id=supplier.id).exists()
+            or ProcurementSupplierPriceList.objects.filter(supplier_id=supplier.id).exists()
+        ):
+            blockers.append("есть прайс-листы")
+
+        if PriceRecord.objects.filter(supplier_id=supplier.id).exists():
+            blockers.append("есть история цен")
+
+        if ItemSupplierMapping.objects.filter(
+            price_list_line__price_list__supplier_id=supplier.id
+        ).exists():
+            blockers.append("есть сопоставления номенклатуры")
+
+        if blockers:
+            raise ValidationError({
+                "detail": (
+                    "Нельзя удалить поставщика: "
+                    + ", ".join(blockers)
+                    + ". Сначала удалите или перенесите связанные документы."
+                )
+            })
+
+        return super().destroy(request, *args, **kwargs)
 
 class SupplierPriceListViewSet(viewsets.ModelViewSet): 
     queryset = SupplierPriceList.objects.all() 

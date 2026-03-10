@@ -413,6 +413,11 @@ React.useEffect(() => {
     setLines((prev) => [...prev, { item: null, qty: 1 }]);
   };
 
+  const deadlineToIso = (d: string): string | null => {
+    if (!d) return null;
+    return `${d}T12:00:00Z`;
+  };
+
   // Сохранение
   const save = async () => {
     if (!canSave) return;
@@ -421,8 +426,9 @@ React.useEffect(() => {
     try {
       const payload = {
         comment,
+        project_id: projectId,
         project_stage_id: stageId,
-        deadline: deadline || null,
+        deadline: deadlineToIso(deadline),
         lines: lines
           .filter((l) => l.item !== null && l.qty > 0)
           .map((l) => {

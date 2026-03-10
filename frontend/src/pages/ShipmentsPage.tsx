@@ -1,381 +1,288 @@
 /**
- * Доставки (Shipments).
- * 
- * Отслеживание доставки товаров от поставщиков,
- * регистрация получения и статусов доставки.
- */
-/**
- * Доставки (Shipments).
+ * Доставки (Shipments) — список.
  *
- * Отслеживание доставки товаров от поставщиков,
- * регистрация получения и статусов доставки.
+ * Для MVP: без двухпанельного UI (который ломает таблицу на разных ширинах).
+ * Детали доставки открываются на отдельной странице: /shipments/:id
  */
 
 import * as React from 'react';
 
+import { useNavigate, useSearchParams } from 'react-router-dom';
+
 import {
-    Box,
-    Button,
-    Card,
-    CardContent,
-    Chip,
-    CircularProgress,
-    Dialog,
-    DialogActions,
-    DialogContent,
-    DialogTitle,
-    Divider,
-    Grid,
-    Paper,
-    Stack,
-    Table,
-    TableBody,
-    TableCell,
-    TableContainer,
-    TableHead,
-    TableRow,
-    TextField,
-    Typography,
-    IconButton,
+  Box,
+  Checkbox,
+  CircularProgress,
+  FormControlLabel,
+  IconButton,
+  Paper,
+  Stack,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  TextField,
+  Tooltip,
+  Typography,
 } from '@mui/material';
 
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 
 import { http, fixPath } from '../api/_http';
+import StatusChip from '../components/StatusChip';
 
-type ShipmentStatus = 'pending' | 'in_transit' | 'delivered' | 'issues';
+type ShipmentStatus = 'planned' | 'in_transit' | 'delivered' | 'cancelled';
 
 type Shipment = {
-    id: number;
-    po_id: number;
-    po_number: string;
-    supplier_id: number;
-    supplier_name: string;
-    status: ShipmentStatus;
-    tracking_number?: string;
-    // legacy/compat field name (may be null)
-    estimated_delivery: string;
-    actual_delivery?: string;
-    notes?: string;
-    // extras (newer backend)
-    project_name?: string | null;
-    stage_name?: string | null;
-    delivery_address?: string | null;
-    planned_date?: string | null;
-    lines?: Array<{
-        id?: number;
-        item_name?: string;
-        name?: string;
-        qty?: number;
-        quantity?: number;
-    }>;
-    created_at: string;
-    updated_at: string;
+  id: number;
+  short_number?: string | null;
+  order_id: number;
+  order_number: string;
+  supplier_name: string;
+  status: ShipmentStatus;
+  eta_date?: string | null;
+  notes?: string | null;
+  project_name?: string | null;
+  stage_name?: string | null;
+  request_items_total?: number | null;
+  request_items_fulfilled?: number | null;
+  request_fulfilled_pct?: number | null;
+  shipment_items_count?: number | null;
+  shipment_cover_pct?: number | null;
+  created_at: string;
+  updated_at: string;
 };
 
-const statusColors: Record<ShipmentStatus, 'default' | 'info' | 'success' | 'error'> = {
-    pending: 'default',
-    in_transit: 'info',
-    delivered: 'success',
-    issues: 'error',
-};
-
-const statusLabels: Record<ShipmentStatus, string> = {
-    pending: 'Ожидание',
-    in_transit: 'В пути',
-    delivered: 'Доставлено',
-    issues: 'Проблемы',
-};
+function isShipmentCompleted(s: Shipment): boolean {
+  return s.status === 'delivered' || s.status === 'cancelled';
+}
 
 export default function ShipmentsPage() {
-    const qc = useQueryClient();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
 
-    const [selectedId, setSelectedId] = React.useState<number | null>(null);
-    const [notes, setNotes] = React.useState<string>('');
-    const [dlgOpen, setDlgOpen] = React.useState<boolean>(false);
-    const [dlgStatus, setDlgStatus] = React.useState<ShipmentStatus>('in_transit');
+  // Backward compatibility: /shipments?shipment_id=123 → /shipments/123
+  React.useEffect(() => {
+    const raw = searchParams.get('shipment_id');
+    if (!raw) return;
+    const id = Number(raw);
+    if (Number.isFinite(id) && id > 0) {
+      navigate(`/shipments/${encodeURIComponent(String(id))}`, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
-    // Загрузка списка доставок
-    const { data: shipments = [], isLoading } = useQuery<Shipment[]>({
-        queryKey: ['shipments'],
-        queryFn: async () => {
-            const res = await http.get(fixPath('/api/procurement/shipments/'));
-            return Array.isArray(res.data) ? res.data : res.data?.results || [];
-        },
+  const STORAGE_KEY_COMPLETED = 'snab.shipments.showCompleted';
+  const [showCompleted, setShowCompleted] = React.useState<boolean>(() => {
+    try {
+      return localStorage.getItem(STORAGE_KEY_COMPLETED) === '1';
+    } catch {
+      return false;
+    }
+  });
+  React.useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY_COMPLETED, showCompleted ? '1' : '0');
+    } catch {
+      // ignore
+    }
+  }, [showCompleted]);
+
+  const [qText, setQText] = React.useState('');
+
+  const { data: shipments = [], isLoading } = useQuery<Shipment[]>({
+    queryKey: ['shipments'],
+    queryFn: async () => {
+      const res = await http.get(fixPath('/api/procurement/shipments/'));
+      return Array.isArray(res.data) ? res.data : res.data?.results || [];
+    },
+  });
+
+  const filteredShipments = React.useMemo(() => {
+    const q = qText.trim().toLowerCase();
+    return shipments.filter((s) => {
+      if (!showCompleted && isShipmentCompleted(s)) return false;
+      if (!q) return true;
+      const hay = `${s.id} ${s.short_number ?? ''} ${s.order_number ?? ''} ${s.supplier_name ?? ''} ${s.project_name ?? ''} ${s.stage_name ?? ''} ${s.notes ?? ''}`.toLowerCase();
+      return hay.includes(q);
     });
+  }, [shipments, qText, showCompleted]);
 
-    // Детали выбранной доставки (нужны для состава/адреса и т.п.)
-    const { data: selectedDetail } = useQuery<Shipment>({
-        queryKey: ['shipment', selectedId],
-        enabled: !!selectedId,
-        queryFn: async () => {
-            const res = await http.get(fixPath(`/api/procurement/shipments/${selectedId}/`));
-            return res.data as Shipment;
-        },
-    });
+  return (
+    <Box p={2}>
+      <Stack
+        direction={{ xs: 'column', md: 'row' }}
+        alignItems={{ xs: 'flex-start', md: 'center' }}
+        justifyContent="space-between"
+        spacing={1.25}
+        sx={{ mb: 1 }}
+      >
+        <Typography variant="h5">Доставки</Typography>
 
-    // Обновление статуса доставки
-    const updateStatusMut = useMutation({
-        mutationFn: (payload: { id: number; status: ShipmentStatus; notes?: string }) =>
-            http.patch(fixPath(`/api/procurement/shipments/${payload.id}/`), {
-                status: payload.status,
-                notes: payload.notes,
-            }),
-        onSuccess: () => {
-            qc.invalidateQueries({ queryKey: ['shipments'] });
-            qc.invalidateQueries({ queryKey: ['shipment', selectedId] });
-            setNotes('');
-            setDlgOpen(false);
-        },
-    });
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ width: { xs: '100%', md: 'auto' } }}>
+          <TextField
+            size="small"
+            label="Поиск (номер / заказ / проект / этап / комм.)"
+            value={qText}
+            onChange={(e) => setQText(e.target.value)}
+            sx={{ minWidth: { xs: '100%', sm: 380 } }}
+          />
+          <FormControlLabel
+            sx={{ ml: 0.5, userSelect: 'none' }}
+            control={<Checkbox checked={showCompleted} onChange={(e) => setShowCompleted(e.target.checked)} />}
+            label={<Typography variant="body2">Показывать завершённые</Typography>}
+          />
+        </Stack>
+      </Stack>
 
-    const selected = (selectedDetail as Shipment | undefined) ?? shipments.find((s) => s.id === selectedId) ?? null;
+      <Paper>
+        {isLoading ? (
+          <Box p={2} display="flex" justifyContent="center">
+            <CircularProgress />
+          </Box>
+        ) : filteredShipments.length === 0 ? (
+          <Box p={2}>
+            <Typography color="text.secondary">Доставок не найдено</Typography>
+          </Box>
+        ) : (
+          <TableContainer sx={{ overflowX: 'hidden' }}>
+            <Table
+              size="small"
+              sx={{
+                width: '100%',
+                tableLayout: 'fixed',
+              }}
+            >
+              <TableHead>
+                <TableRow>
+                  <TableCell sx={{ width: '8%', whiteSpace: 'nowrap' }}>№</TableCell>
+                  <TableCell sx={{ width: '12%', whiteSpace: 'nowrap' }}>Заказ</TableCell>
+                  <TableCell sx={{ width: '12%' }}>Проект</TableCell>
+                  <TableCell sx={{ width: '22%' }}>Этап</TableCell>
+                  <TableCell sx={{ width: '10%', whiteSpace: 'nowrap' }}>План. дата</TableCell>
+                  <TableCell sx={{ width: '12%', whiteSpace: 'nowrap' }}>Статус</TableCell>
+                  <TableCell sx={{ width: '12%' }}>Прогресс</TableCell>
+                  <TableCell sx={{ width: '12%' }}>Комментарий</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {filteredShipments.map((s) => (
+                  <TableRow
+                    key={s.id}
+                    hover
+                    onClick={() => navigate(`/shipments/${encodeURIComponent(String(s.id))}`)}
+                    sx={{ cursor: 'pointer' }}
+                  >
+                    <TableCell sx={{ whiteSpace: 'nowrap', fontWeight: 700 }}>
+                      {s.short_number || `D-${s.id}`}
+                    </TableCell>
 
-    React.useEffect(() => {
-        if (selected?.notes) setNotes(selected.notes);
-    }, [selectedId]);
+                    <TableCell sx={{ overflow: 'hidden' }}>
+                      <Stack direction="row" alignItems="center" spacing={0.5} sx={{ minWidth: 0 }}>
+                        <Typography variant="body2" noWrap sx={{ fontWeight: 600 }}>
+                          {s.order_number}
+                        </Typography>
+                        <Tooltip title="Открыть заказ">
+                          <IconButton
+                            size="small"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              navigate(`/po?order_id=${encodeURIComponent(String(s.order_id))}`);
+                            }}
+                          >
+                            <OpenInNewIcon fontSize="inherit" />
+                          </IconButton>
+                        </Tooltip>
+                      </Stack>
+                    </TableCell>
 
-    const handleStatusChange = (status: ShipmentStatus) => {
-        setDlgStatus(status);
-        setDlgOpen(true);
-    };
+                    {/* line-clamp ставим на внутренний Box, иначе таблица начинает "ехать" */}
+                    <TableCell sx={{ verticalAlign: 'top' }}>
+                      {s.project_name ? (
+                        <Tooltip title={s.project_name} placement="top" arrow>
+                          <Box
+                            sx={{
+                              whiteSpace: 'normal',
+                              wordBreak: 'break-word',
+                              overflowWrap: 'anywhere',
+                              display: '-webkit-box',
+                              WebkitLineClamp: 2,
+                              WebkitBoxOrient: 'vertical',
+                              overflow: 'hidden',
+                            }}
+                          >
+                            {s.project_name}
+                          </Box>
+                        </Tooltip>
+                      ) : (
+                        '—'
+                      )}
+                    </TableCell>
 
-    const handleConfirmStatusChange = () => {
-        if (selected) {
-            updateStatusMut.mutate({
-                id: selected.id,
-                status: dlgStatus,
-                notes,
-            });
-        }
-    };
+                    <TableCell sx={{ verticalAlign: 'top' }}>
+                      {s.stage_name ? (
+                        <Tooltip title={s.stage_name} placement="top" arrow>
+                          <Box
+                            sx={{
+                              whiteSpace: 'normal',
+                              wordBreak: 'break-word',
+                              overflowWrap: 'anywhere',
+                              display: '-webkit-box',
+                              WebkitLineClamp: 2,
+                              WebkitBoxOrient: 'vertical',
+                              overflow: 'hidden',
+                            }}
+                          >
+                            {s.stage_name}
+                          </Box>
+                        </Tooltip>
+                      ) : (
+                        '—'
+                      )}
+                    </TableCell>
 
-    return (
-        <Box p={2}>
-            <Typography variant="h5" gutterBottom>
-                Доставки
-            </Typography>
+                    <TableCell sx={{ whiteSpace: 'nowrap' }}>{s.eta_date || '—'}</TableCell>
 
-            <Grid container spacing={2}>
-                {/* Список доставок */}
-                <Grid item xs={12} md={7}>
-                    <Paper>
-                        {isLoading ? (
-                            <Box p={2} display="flex" justifyContent="center">
-                                <CircularProgress />
-                            </Box>
-                        ) : shipments.length === 0 ? (
-                            <Box p={2}>
-                                <Typography color="text.secondary">Доставок пока нет</Typography>
-                            </Box>
-                        ) : (
-                            <TableContainer>
-                                <Table size="small">
-                                    <TableHead>
-                                        <TableRow>
-                                            <TableCell>ID</TableCell>
-                                            <TableCell>Заказ</TableCell>
-                                            <TableCell>Объект</TableCell>
-                                            <TableCell>Этап</TableCell>
-                                            <TableCell>План. дата</TableCell>
-                                            <TableCell>Статус</TableCell>
-                                        </TableRow>
-                                    </TableHead>
-                                    <TableBody>
-                                        {shipments.map((s) => (
-                                            <TableRow
-                                                key={s.id}
-                                                hover
-                                                onClick={() => setSelectedId(s.id)}
-                                                sx={{ cursor: 'pointer' }}
-                                            >
-                                                <TableCell>{s.id}</TableCell>
-                                                <TableCell>
-                                                    <Box display="flex" alignItems="center" gap={0.5}>
-                                                        <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                                                            {s.po_number}
-                                                        </Typography>
-                                                        <IconButton
-                                                            size="small"
-                                                            aria-label="Открыть заказ"
-                                                            title="Открыть заказ"
-                                                            onClick={(e) => {
-                                                                e.stopPropagation();
-                                                                // не используем react-router здесь, чтобы не трогать App.tsx
-                                                                window.location.href = `/po?po_id=${encodeURIComponent(String(s.po_id))}`;
-                                                            }}
-                                                        >
-                                                            <OpenInNewIcon fontSize="inherit" />
-                                                        </IconButton>
-                                                    </Box>
-                                                </TableCell>
-                                                <TableCell>{s.project_name || '—'}</TableCell>
-                                                <TableCell>{s.stage_name || '—'}</TableCell>
-                                                <TableCell>{s.planned_date || s.estimated_delivery || '—'}</TableCell>
-                                                <TableCell>
-                                                    <Chip
-                                                        size="small"
-                                                        color={statusColors[s.status]}
-                                                        label={statusLabels[s.status]}
-                                                    />
-                                                </TableCell>
-                                            </TableRow>
-                                        ))}
-                                    </TableBody>
-                                </Table>
-                            </TableContainer>
-                        )}
-                    </Paper>
-                </Grid>
+                    <TableCell>
+                      <StatusChip entity="shipment" status={s.status} compact />
+                    </TableCell>
 
-                {/* Детали выбранной доставки */}
-                <Grid item xs={12} md={5}>
-                    <Card>
-                        <CardContent>
-                            {selected ? (
-                                <Stack spacing={1}>
-                                    <Typography variant="h6">Доставка #{selected.id}</Typography>
-                                    <Divider />
-                                    <Typography variant="body2">
-                                        <strong>Заказ:</strong>{' '}
-                                        <a href={`/po?po_id=${encodeURIComponent(String(selected.po_id))}`}>{selected.po_number}</a>
-                                    </Typography>
-                                    <Typography variant="body2">
-                                        <strong>Поставщик:</strong> {selected.supplier_name}
-                                    </Typography>
-                                    <Typography variant="body2">
-                                        <strong>Объект:</strong> {selected.project_name || '—'}
-                                    </Typography>
-                                    <Typography variant="body2">
-                                        <strong>Этап:</strong> {selected.stage_name || '—'}
-                                    </Typography>
-                                    {selected.tracking_number && (
-                                        <Typography variant="body2">
-                                            <strong>Трек-номер:</strong> {selected.tracking_number}
-                                        </Typography>
-                                    )}
-                                    <Typography variant="body2">
-                                        <strong>Статус:</strong> {statusLabels[selected.status]}
-                                    </Typography>
-                                    <Typography variant="body2">
-                                        <strong>Планируемая дата доставки:</strong>{' '}
-                                        {selected.planned_date || selected.estimated_delivery || '—'}
-                                    </Typography>
-                                    <Typography variant="body2">
-                                        <strong>Адрес доставки:</strong> {selected.delivery_address || '—'}
-                                    </Typography>
-                                    {selected.actual_delivery && (
-                                        <Typography variant="body2">
-                                            <strong>Фактическая дата доставки:</strong> {selected.actual_delivery}
-                                        </Typography>
-                                    )}
-                                    {selected.notes && (
-                                        <Typography variant="body2">
-                                            <strong>Примечания:</strong> {selected.notes}
-                                        </Typography>
-                                    )}
+                    <TableCell sx={{ whiteSpace: 'normal' }}>
+                      {typeof s.request_items_total === 'number' && s.request_items_total > 0 ? (
+                        <Stack spacing={0}>
+                          <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                            {s.request_items_fulfilled ?? 0}/{s.request_items_total}
+                            {typeof s.request_fulfilled_pct === 'number' ? ` (${s.request_fulfilled_pct}%)` : ''}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            Доля: {s.shipment_items_count ?? 0}/{s.request_items_total}
+                            {typeof s.shipment_cover_pct === 'number' ? ` (${s.shipment_cover_pct}%)` : ''}
+                          </Typography>
+                        </Stack>
+                      ) : (
+                        <Typography variant="body2" color="text.secondary">
+                          —
+                        </Typography>
+                      )}
+                    </TableCell>
 
-                                    <Divider sx={{ my: 1 }} />
-
-                                    <Typography variant="subtitle2">Состав доставки</Typography>
-                                    {Array.isArray(selected.lines) && selected.lines.length > 0 ? (
-                                        <Table size="small">
-                                            <TableHead>
-                                                <TableRow>
-                                                    <TableCell>Наименование</TableCell>
-                                                    <TableCell align="right">Кол-во</TableCell>
-                                                </TableRow>
-                                            </TableHead>
-                                            <TableBody>
-                                                {selected.lines.map((ln, idx) => {
-                                                    const name = ln.item_name || ln.name || `Строка ${idx + 1}`;
-                                                    const qty = (ln.qty ?? ln.quantity ?? 0) as number;
-                                                    return (
-                                                        <TableRow key={(ln.id ?? idx) as any}>
-                                                            <TableCell>{name}</TableCell>
-                                                            <TableCell align="right">{qty}</TableCell>
-                                                        </TableRow>
-                                                    );
-                                                })}
-                                            </TableBody>
-                                        </Table>
-                                    ) : (
-                                        <Typography variant="body2" color="text.secondary">
-                                            Строки доставки не загружены.
-                                        </Typography>
-                                    )}
-
-                                    {selected.status !== 'delivered' ? (
-                                        <Stack direction="row" spacing={1} mt={2}>
-                                            {selected.status === 'pending' && (
-                                                <Button
-                                                    size="small"
-                                                    variant="contained"
-                                                    onClick={() => handleStatusChange('in_transit')}
-                                                >
-                                                    В пути
-                                                </Button>
-                                            )}
-                                            {selected.status === 'in_transit' && (
-                                                <Button
-                                                    size="small"
-                                                    variant="contained"
-                                                    onClick={() => handleStatusChange('delivered')}
-                                                >
-                                                    Доставлено
-                                                </Button>
-                                            )}
-                                            <Button
-                                                size="small"
-                                                variant="outlined"
-                                                color="error"
-                                                onClick={() => handleStatusChange('issues')}
-                                            >
-                                                Проблема с доставкой
-                                            </Button>
-                                        </Stack>
-                                    ) : (
-                                        <Typography mt={2} color="success.main">
-                                            ✓ Доставлено
-                                        </Typography>
-                                    )}
-                                </Stack>
-                            ) : (
-                                <Typography variant="body2" color="text.secondary">
-                                    Выберите доставку для просмотра деталей
-                                </Typography>
-                            )}
-                        </CardContent>
-                    </Card>
-                </Grid>
-            </Grid>
-
-            {/* Диалог изменения статуса */}
-            <Dialog open={dlgOpen} onClose={() => setDlgOpen(false)} maxWidth="sm" fullWidth>
-                <DialogTitle>Изменить статус доставки</DialogTitle>
-                <DialogContent>
-                    <Typography variant="body2" gutterBottom>
-                        Новый статус: {statusLabels[dlgStatus]}
-                    </Typography>
-                    <TextField
-                        label="Комментарий"
-                        value={notes}
-                        onChange={(e) => setNotes(e.target.value)}
-                        fullWidth
-                        multiline
-                        minRows={3}
-                        placeholder="Например: Задержка в пути, повреждена упаковка и т.д."
-                    />
-                </DialogContent>
-                <DialogActions>
-                    <Button onClick={() => setDlgOpen(false)}>Отмена</Button>
-                    <Button onClick={handleConfirmStatusChange} variant="contained">
-                        Подтвердить
-                    </Button>
-                </DialogActions>
-            </Dialog>
-        </Box>
-    );
+                    <TableCell
+                      sx={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                      title={s.notes || ''}
+                    >
+                      {s.notes || '—'}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        )}
+      </Paper>
+    </Box>
+  );
 }

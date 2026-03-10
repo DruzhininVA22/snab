@@ -116,6 +116,8 @@ export default function SupplierPriceListsPage() {
 
     const [formErrors, setFormErrors] = React.useState<Record<string, string>>({});
 
+    const [submitError, setSubmitError] = React.useState<string | null>(null);
+
     // ========================
     // СОСТОЯНИЕ - API ДАННЫЕ
     // ========================
@@ -211,6 +213,7 @@ export default function SupplierPriceListsPage() {
             is_active: true,
         });
         setFormErrors({});
+        setSubmitError(null);
         setOpenCreateDialog(true);
     };
 
@@ -233,6 +236,7 @@ export default function SupplierPriceListsPage() {
             });
         }
         setFormErrors({});
+        setSubmitError(null);
         setOpenCreateDialog(true);
     };
 
@@ -251,6 +255,7 @@ export default function SupplierPriceListsPage() {
             is_active: true,
         });
         setFormErrors({});
+        setSubmitError(null);
     };
 
     /**
@@ -275,24 +280,39 @@ export default function SupplierPriceListsPage() {
     const handleSubmitForm = async () => {
         if (!validateForm()) return;
 
+        setSubmitError(null);
+
+        const extractError = (err: any): string => {
+            const data = err?.response?.data;
+            if (!data) return err?.message || 'Ошибка при сохранении';
+            if (typeof data === 'string') return data;
+            if (typeof data?.detail === 'string') return data.detail;
+            try {
+                const parts: string[] = [];
+                Object.entries(data).forEach(([k, v]) => {
+                    if (v == null) return;
+                    if (Array.isArray(v)) parts.push(`${k}: ${v.join(', ')}`);
+                    else parts.push(`${k}: ${String(v)}`);
+                });
+                return parts.join('; ') || (err?.message || 'Ошибка при сохранении');
+            } catch {
+                return err?.message || 'Ошибка при сохранении';
+            }
+        };
+
         try {
             if (editingId) {
-                // Обновление
-                updateMutation.mutate({
+                await updateMutation.mutateAsync({
                     id: editingId,
                     payload: form,
                 });
             } else {
-                // Создание
-                createMutation.mutate(form);
+                await createMutation.mutateAsync(form);
             }
-
-            // Закроем диалог после успеха
-            setTimeout(() => {
-                handleCloseCreateDialog();
-            }, 500);
-        } catch (err) {
+            handleCloseCreateDialog();
+        } catch (err: any) {
             console.error('Ошибка при сохранении:', err);
+            setSubmitError(extractError(err));
         }
     };
 
@@ -636,13 +656,7 @@ export default function SupplierPriceListsPage() {
                 <DialogContent sx={{ pt: 2 }}>
                     <Stack spacing={2}>
                         {/* ОШИБКИ */}
-                        {(createMutation.isError || updateMutation.isError) && (
-                            <Alert severity="error">
-                                {(createMutation.error as any)?.message ||
-                                    (updateMutation.error as any)?.message ||
-                                    'Ошибка при сохранении'}
-                            </Alert>
-                        )}
+                        {submitError ? <Alert severity="error">{submitError}</Alert> : null}
 
                         {/* ВЫБОР ПОСТАВЩИКА */}
                         <FormControl fullWidth error={!!formErrors.supplier}>

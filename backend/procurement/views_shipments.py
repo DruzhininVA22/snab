@@ -9,6 +9,7 @@ from django.utils import timezone
 from rest_framework import permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.exceptions import ValidationError
 
 from .models import PurchaseOrder, PurchaseOrderLine
 from .models_shipments import Shipment, ShipmentLine
@@ -101,11 +102,18 @@ class ShipmentViewSet(viewsets.ModelViewSet):
         ser = ShipmentCreateSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
 
-        po = PurchaseOrder.objects.select_related("supplier").get(id=ser.validated_data["order"])
+        po = PurchaseOrder.objects.select_related("supplier", "project", "project_stage").get(id=ser.validated_data["order"])
+        project = getattr(po, "project", None)
+        project_stage = getattr(po, "project_stage", None)
+        if project is None and project_stage is not None:
+            project = getattr(project_stage, "project", None)
+        fallback_project_address = (getattr(project, "delivery_address", "") or "").strip() if project is not None else ""
         sh = Shipment.objects.create(
             order=po,
+            project=project,
+            project_stage=project_stage,
             eta_date=ser.validated_data.get("eta_date"),
-            address=(ser.validated_data.get("address") or "").strip() or getattr(po, "delivery_address", "") or "",
+            address=(ser.validated_data.get("address") or "").strip() or getattr(po, "delivery_address", "") or fallback_project_address or "",
             notes=(ser.validated_data.get("notes") or "").strip(),
         )
         return Response(ShipmentSerializer(sh).data, status=status.HTTP_201_CREATED)
@@ -123,6 +131,7 @@ class ShipmentViewSet(viewsets.ModelViewSet):
         other = (
             ShipmentLine.objects.filter(order_line__order=sh.order)
             .exclude(shipment=sh)
+            .exclude(shipment__status=Shipment.Status.CANCELLED)
             .values("order_line_id")
             .annotate(s=Sum("qty"))
         )
@@ -164,6 +173,8 @@ class ShipmentViewSet(viewsets.ModelViewSet):
         ser.is_valid(raise_exception=True)
 
         sh.status = ser.validated_data["status"]
+        if "notes" in ser.validated_data and ser.validated_data.get("notes") is not None:
+            sh.notes = (ser.validated_data.get("notes") or "").strip()
         if sh.status == Shipment.Status.DELIVERED and not sh.delivered_at:
             sh.delivered_at = timezone.localdate()
         sh.save()
@@ -172,9 +183,31 @@ class ShipmentViewSet(viewsets.ModelViewSet):
 
         return Response(ShipmentSerializer(sh).data)
 
+
+    @transaction.atomic
+    def partial_update(self, request, *args, **kwargs):
+        sh = self.get_queryset().get(pk=kwargs["pk"])
+        new_address = request.data.get("address", None)
+        if new_address is not None and (new_address or "").strip() != (sh.address or "").strip():
+            return Response({"detail": "Адрес доставки в документе доставки менять нельзя. Исправьте адрес на уровне заказа перед созданием доставки."}, status=400)
+        return super().partial_update(request, *args, **kwargs)
+
+    @transaction.atomic
+    def update(self, request, *args, **kwargs):
+        sh = self.get_queryset().get(pk=kwargs["pk"])
+        new_address = request.data.get("address", None)
+        if new_address is not None and (new_address or "").strip() != (sh.address or "").strip():
+            return Response({"detail": "Адрес доставки в документе доставки менять нельзя. Исправьте адрес на уровне заказа перед созданием доставки."}, status=400)
+        return super().update(request, *args, **kwargs)
+
     @transaction.atomic
     def destroy(self, request, *args, **kwargs):
         sh = self.get_queryset().get(pk=kwargs["pk"])
+
+        # Доставка — конечный документ: запрещаем удалять, если она уже в пути/доставлена.
+        if sh.status in (Shipment.Status.IN_TRANSIT, Shipment.Status.DELIVERED):
+            raise ValidationError({"detail": "Нельзя удалить доставку в статусе 'В пути' или 'Доставлено'."})
+
         po = sh.order
         sh.delete()
         _recalc_po_status_from_shipments(po)

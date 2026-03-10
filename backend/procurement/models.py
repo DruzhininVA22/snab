@@ -186,6 +186,25 @@ class PurchaseOrder(models.Model):
         related_name='purchase_orders',
         verbose_name='Заявка'
     )
+
+    # Снимок реквизитов (Проект/Этап) на уровне заказа.
+    # Важен для стабильного отображения и отчётности, даже если заявка/этап менялись.
+    project = models.ForeignKey(
+        Project,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="purchase_orders",
+        verbose_name="Проект",
+    )
+    project_stage = models.ForeignKey(
+        ProjectStage,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="purchase_orders",
+        verbose_name="Этап проекта",
+    )
     supplier = models.ForeignKey(
         Supplier,
         on_delete=models.PROTECT,

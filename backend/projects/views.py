@@ -87,10 +87,14 @@ class ProjectViewSet(
         """
         Выбирает сериализатор в зависимости от выполняемого действия (list/retrieve/create/...).
         Нужно, чтобы в списках отдавать краткую форму, а в карточке — расширенную.
+        Для create/update/partial_update используем отдельный write-сериализатор,
+        чтобы можно было менять статус, даты и адрес доставки проекта.
         """
         if self.action == "retrieve":
             return ProjectDetailSerializer
-        return ProjectListSerializer
+        if self.action == "list":
+            return ProjectListSerializer
+        return ProjectSerializer
 
     def get_queryset(self):
         """

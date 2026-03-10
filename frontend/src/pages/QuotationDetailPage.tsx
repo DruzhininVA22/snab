@@ -4,7 +4,6 @@ import {
   Button,
   Card,
   CardContent,
-  Chip,
   CircularProgress,
   Divider,
   IconButton,
@@ -31,16 +30,22 @@ import SaveIcon from '@mui/icons-material/Save';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { http, fixPath } from '../api/_http';
+import StatusChip from '../components/StatusChip';
 
 type Quote = {
   id: number;
   purchase_request_id?: number | null;
+  purchase_order_id?: number | null;
+  purchase_order_number?: string | null;
   supplier_name: string;
   status: string;
   total_price: number;
   currency: string;
   delivery_days?: number | null;
   notes?: string | null;
+  project_name?: string | null;
+  stage_name?: string | null;
+  project_address?: string | null;
 };
 
 type QuoteLine = {
@@ -67,12 +72,7 @@ function fmtMoney(amount: number, currency?: string) {
   }
 }
 
-const statusLabels: Record<string, string> = {
-  received: 'Получено',
-  reviewed: 'Рассмотрено',
-  selected: 'Утверждено',
-  rejected: 'Отклонено',
-};
+// Статусы отображаем единообразно через общий компонент StatusChip
 
 type Props = { quoteId: number };
 
@@ -101,6 +101,17 @@ function toNumOrNull(v: any): number | null {
   if (v === '' || v == null) return null;
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
+}
+
+function InfoItem({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <Box>
+      <Typography variant="caption" color="text.secondary">
+        {label}
+      </Typography>
+      <Box sx={{ mt: 0.25 }}>{children}</Box>
+    </Box>
+  );
 }
 
 
@@ -197,9 +208,14 @@ const createPOMut = useMutation({
       const res = await http.post(fixPath(`/api/procurement/quotes/${quoteId}/create_po/`), {});
       return res.data;
     },
-    onSuccess: async () => {
-      alert('Заказ сформирован. КП считается зафиксированным (read-only).');
+    onSuccess: async (data: any) => {
+      const orderId = Number(data?.id || data?.order_id || 0);
       await qc.invalidateQueries({ queryKey: ['quote', quoteId] });
+      if (orderId) {
+        nav(fixPath(`/po?order_id=${orderId}`));
+        return;
+      }
+      alert('Заказ сформирован.');
     },
   });
 
@@ -208,6 +224,10 @@ const createPOMut = useMutation({
     setEditLine({ ...ln });
     setEditOpen(true);
   };
+
+  const prId = quoteQuery.data?.purchase_request_id ?? null;
+  const poId = quoteQuery.data?.purchase_order_id ?? null;
+  const poNumber = quoteQuery.data?.purchase_order_number ?? null;
 
   return (
     <Box>
@@ -239,39 +259,142 @@ const createPOMut = useMutation({
       ) : (
         <Card sx={{ mb: 2 }}>
           <CardContent>
-            <Stack spacing={1}>
-              <Typography variant="body2">
-                <strong>Поставщик:</strong> {quoteQuery.data?.supplier_name}
-              </Typography>
-              <Typography variant="body2">
-                <strong>Заявка:</strong> {quoteQuery.data?.purchase_request_id ? `#${quoteQuery.data.purchase_request_id}` : '—'}
-              </Typography>
-              <Typography variant="body2">
-                <strong>Статус:</strong> <Chip size="small" label={statusLabels[quoteQuery.data?.status || ''] || quoteQuery.data?.status} />
-              </Typography>
-              <Typography variant="body2">
-                <strong>Сумма:</strong> {fmtMoney(quoteQuery.data?.total_price || 0, quoteQuery.data?.currency)}
-              </Typography>
+            <Stack spacing={1.5}>
+              <Stack
+                direction={{ xs: 'column', md: 'row' }}
+                spacing={2}
+                alignItems={{ md: 'flex-start' }}
+                justifyContent="space-between"
+              >
+                <Box sx={{ flex: 1, minWidth: 260 }}>
+                  <Typography variant="subtitle1" sx={{ fontWeight: 700, lineHeight: 1.2 }}>
+                    {quoteQuery.data?.supplier_name || 'Поставщик'}
+                  </Typography>
+                  <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 0.75 }}>
+                    <StatusChip entity="quote" status={quoteQuery.data?.status} />
+                    <Typography variant="body2" color="text.secondary">
+                      КП #{quoteId}
+                    </Typography>
+                  </Stack>
+                  {quoteQuery.data?.notes ? (
+                    <Typography variant="body2" color="text.secondary" sx={{ mt: 1, whiteSpace: 'pre-wrap' }}>
+                      {quoteQuery.data.notes}
+                    </Typography>
+                  ) : null}
+                </Box>
+
+                <Box sx={{ textAlign: { xs: 'left', md: 'right' }, minWidth: 220 }}>
+                  <Typography variant="caption" color="text.secondary">
+                    Сумма КП
+                  </Typography>
+                  <Typography variant="h6" sx={{ fontWeight: 800, lineHeight: 1.2 }}>
+                    {fmtMoney(quoteQuery.data?.total_price || 0, quoteQuery.data?.currency)}
+                  </Typography>
+                  {quoteQuery.data?.delivery_days != null ? (
+                    <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                      Срок доставки: {quoteQuery.data.delivery_days} дн.
+                    </Typography>
+                  ) : null}
+                </Box>
+              </Stack>
 
               <Divider />
 
+              <Box
+                sx={{
+                  display: 'grid',
+                  gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' },
+                  gap: 1.25,
+                }}
+              >
+                <InfoItem label="Заявка">
+                  {prId ? (
+                    <Button
+                      variant="text"
+                      size="small"
+                      sx={{ p: 0, minWidth: 0, textTransform: 'none' }}
+                      onClick={() => nav(fixPath(`/pr?purchase_request_id=${prId}`))}
+                    >
+                      PR#{prId}
+                    </Button>
+                  ) : (
+                    <Typography variant="body2">—</Typography>
+                  )}
+                </InfoItem>
+
+                <InfoItem label="Заказ">
+                  {poId ? (
+                    <Button
+                      variant="text"
+                      size="small"
+                      sx={{ p: 0, minWidth: 0, textTransform: 'none' }}
+                      onClick={() => nav(fixPath(`/po?order_id=${poId}`))}
+                    >
+                      {poNumber || `PO#${poId}`}
+                    </Button>
+                  ) : (
+                    <Typography variant="body2">—</Typography>
+                  )}
+                </InfoItem>
+
+                <InfoItem label="Проект">
+                  <Typography variant="body2">{quoteQuery.data?.project_name || '—'}</Typography>
+                </InfoItem>
+
+                <InfoItem label="Этап">
+                  <Typography variant="body2">{quoteQuery.data?.stage_name || '—'}</Typography>
+                </InfoItem>
+
+                <InfoItem label="Адрес доставки">
+                  <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
+                    {quoteQuery.data?.project_address || '—'}
+                  </Typography>
+                </InfoItem>
+              </Box>
+
               <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} useFlexGap flexWrap="wrap">
-                <Button
-                  variant="contained"
-                  size="small"
-                  sx={{ textTransform: 'none' }}
-                  onClick={() => createPOMut.mutate()}
-                  disabled={createPOMut.isPending}
-                >
-                  Сформировать заказ
-                </Button>
+                {!poId ? (
+                  <Button
+                    variant="contained"
+                    size="small"
+                    sx={{ textTransform: 'none' }}
+                    onClick={() => createPOMut.mutate()}
+                    disabled={createPOMut.isPending}
+                  >
+                    Сформировать заказ
+                  </Button>
+                ) : (
+                  <Button
+                    variant="contained"
+                    size="small"
+                    sx={{ textTransform: 'none' }}
+                    onClick={() => nav(fixPath(`/po?order_id=${poId}`))}
+                  >
+                    Открыть заказ
+                  </Button>
+                )}
+
+                {prId ? (
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    sx={{ textTransform: 'none' }}
+                    onClick={() => nav(fixPath(`/quotes?purchase_request_id=${prId}`))}
+                  >
+                    КП по заявке
+                  </Button>
+                ) : null}
+
                 <Button
                   variant="outlined"
                   size="small"
                   sx={{ textTransform: 'none' }}
-                  onClick={() => nav(fixPath(`/po`))}
+                  onClick={() => {
+                    const url = prId ? `/po?purchase_request_id=${prId}` : '/po';
+                    nav(fixPath(url));
+                  }}
                 >
-                  Перейти к заказам
+                  {prId ? 'Заказы по заявке' : 'Реестр заказов'}
                 </Button>
               </Stack>
             </Stack>

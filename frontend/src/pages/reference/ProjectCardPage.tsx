@@ -41,6 +41,13 @@ import {
 } from '../../api/projects';
 import { updateStage, deleteStage, reorderProjectStages } from '../../api/projects.extra';
 
+const PROJECT_STATUS_OPTIONS = [
+  { value: 'planned', label: 'План' },
+  { value: 'active', label: 'В работе' },
+  { value: 'paused', label: 'Пауза' },
+  { value: 'done', label: 'Завершён' },
+];
+
 export default function ProjectCardPage() {
   const params = useParams();
   const idParam = params?.id || params?.projectId || '';
@@ -119,13 +126,21 @@ export default function ProjectCardPage() {
   // ---------- редактирование шапки проекта ----------
   const [editName, setEditName] = React.useState('');
   const [editCode, setEditCode] = React.useState('');
-  const [editStatus, setEditStatus] = React.useState('');
+  const [editStatus, setEditStatus] = React.useState('planned');
+  const [editDescription, setEditDescription] = React.useState('');
+  const [editDeliveryAddress, setEditDeliveryAddress] = React.useState('');
+  const [editStartDate, setEditStartDate] = React.useState('');
+  const [editEndDate, setEditEndDate] = React.useState('');
 
   React.useEffect(() => {
     if (project) {
       setEditName(project.name || '');
       setEditCode(project.code || '');
-      setEditStatus(project.status || '');
+      setEditStatus(project.status || 'planned');
+      setEditDescription(project.description || '');
+      setEditDeliveryAddress(project.delivery_address || '');
+      setEditStartDate((project.start_date || '')?.slice(0, 10));
+      setEditEndDate((project.end_date || '')?.slice(0, 10));
     }
   }, [project]);
 
@@ -199,10 +214,51 @@ export default function ProjectCardPage() {
               sx={{ maxWidth: 240 }}
             />
             <TextField
+              select
               label="Статус"
               value={editStatus}
               onChange={(e) => setEditStatus(e.target.value)}
               sx={{ maxWidth: 240 }}
+            >
+              {PROJECT_STATUS_OPTIONS.map((opt) => (
+                <MenuItem key={opt.value} value={opt.value}>
+                  {opt.label}
+                </MenuItem>
+              ))}
+            </TextField>
+            <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
+              <TextField
+                label="Дата начала"
+                type="date"
+                value={editStartDate}
+                onChange={(e) => setEditStartDate(e.target.value)}
+                InputLabelProps={{ shrink: true }}
+                sx={{ maxWidth: 220 }}
+              />
+              <TextField
+                label="Дата окончания"
+                type="date"
+                value={editEndDate}
+                onChange={(e) => setEditEndDate(e.target.value)}
+                InputLabelProps={{ shrink: true }}
+                sx={{ maxWidth: 220 }}
+              />
+            </Stack>
+            <TextField
+              label="Адрес проекта / доставки"
+              value={editDeliveryAddress}
+              onChange={(e) => setEditDeliveryAddress(e.target.value)}
+              fullWidth
+              multiline
+              minRows={2}
+            />
+            <TextField
+              label="Описание"
+              value={editDescription}
+              onChange={(e) => setEditDescription(e.target.value)}
+              fullWidth
+              multiline
+              minRows={2}
             />
 
             <Stack direction="row" spacing={2}>
@@ -214,6 +270,10 @@ export default function ProjectCardPage() {
                     name: editName,
                     code: editCode,
                     status: editStatus,
+                    description: editDescription,
+                    delivery_address: editDeliveryAddress,
+                    start_date: editStartDate || null,
+                    end_date: editEndDate || null,
                   })
                 }
                 disabled={saveProjectMut.isLoading}

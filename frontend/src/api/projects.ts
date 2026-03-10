@@ -13,6 +13,8 @@ export type Project = {
   code?: string | null;
   name?: string | null;
   status?: string | null;
+  description?: string | null;
+  delivery_address?: string | null;
   start_date?: string | null;
   end_date?: string | null;
   template?: number | null;

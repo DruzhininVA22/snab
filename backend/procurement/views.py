@@ -23,6 +23,7 @@ from rest_framework.decorators import action, api_view
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.views import APIView
+from rest_framework.exceptions import ValidationError
 
 from .models import (
     PriceRecord, 
@@ -228,6 +229,32 @@ class PurchaseRequestViewSet(viewsets.ModelViewSet):
         kwargs["partial"] = True
         return self.update(request, *args, **kwargs)
 
+    def destroy(self, request, *args, **kwargs):
+        """Запрет удаления заявки, если по ней уже есть связанные документы."""
+        pr: PurchaseRequest = self.get_object()
+
+        reasons: list[str] = []
+        if pr.quotes.exists():
+            reasons.append("по заявке уже есть КП")
+        if pr.purchase_orders.exists():
+            reasons.append("по заявке уже есть заказы")
+
+        # Доставки могут существовать даже если заказов нет (крайний случай импорта/данных).
+        try:
+            from .models_shipments import Shipment
+
+            if Shipment.objects.filter(order__purchase_request=pr).exists():
+                reasons.append("по заявке уже есть доставки")
+        except Exception:
+            pass
+
+        if reasons:
+            raise ValidationError({
+                "detail": "Нельзя удалить заявку: " + "; ".join(reasons) + "."
+            })
+
+        return super().destroy(request, *args, **kwargs)
+
     @action(methods=["get"], detail=False, url_path="refs")
     def refs(self, request, *args, **kwargs):
         """
@@ -265,7 +292,13 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
 
     queryset = (
         PurchaseOrder.objects
-        .select_related("supplier")
+        .select_related(
+            "supplier",
+            "purchase_request",
+            "purchase_request__project",
+            "purchase_request__project_stage",
+            "quote",
+        )
         .prefetch_related("lines")
         .order_by("-id")
     )
@@ -340,6 +373,15 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
 
     def destroy(self, request, *args, **kwargs):
         instance: PurchaseOrder = self.get_object()
+
+        # Нельзя удалять заказ, если по нему есть доставки.
+        if getattr(instance, "shipments", None) is not None and instance.shipments.exists():
+            raise ValidationError({"detail": "Нельзя удалить заказ: по нему уже созданы доставки."})
+
+        # Удаление допускаем только для черновика.
+        if (instance.status or "").lower() != "draft":
+            raise ValidationError({"detail": "Нельзя удалить заказ не в статусе 'Черновик'."})
+
         pr = instance.purchase_request
         resp = super().destroy(request, *args, **kwargs)
         try:
@@ -470,6 +512,13 @@ class QuoteViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(instance)
         return Response(serializer.data)
 
+    def destroy(self, request, *args, **kwargs):
+        """Запрет удаления КП, если из него уже создан заказ."""
+        quote: Quote = self.get_object()
+        if quote.purchase_orders.exists():
+            raise ValidationError({"detail": "Нельзя удалить КП: по нему уже сформирован заказ."})
+        return super().destroy(request, *args, **kwargs)
+
     @action(detail=True, methods=["post"])
     @transaction.atomic
     def create_po(self, request, pk=None):
@@ -488,6 +537,18 @@ class QuoteViewSet(viewsets.ModelViewSet):
 
         pr = quote.purchase_request if quote.purchase_request_id else None
 
+        project = None
+        project_stage = None
+        delivery_address = ""
+        deadline_date = None
+        if pr is not None:
+            project_stage = getattr(pr, "project_stage", None)
+            project = getattr(pr, "project", None) or (getattr(project_stage, "project", None) if project_stage else None)
+            delivery_address = (getattr(project, "delivery_address", "") or "").strip()
+            pr_deadline = getattr(pr, "deadline", None)
+            if pr_deadline is not None:
+                deadline_date = getattr(pr_deadline, "date", lambda: pr_deadline)()
+
         # Уникальный номер заказа: PO-<quote_id>-<YYYYMMDDHHMMSS>
         po_number = f"PO-{quote.id}"
 
@@ -497,6 +558,10 @@ class QuoteViewSet(viewsets.ModelViewSet):
             status="draft",
             quote=quote,
             purchase_request=pr,
+            project=project,
+            project_stage=project_stage,
+            deadline=deadline_date,
+            delivery_address=delivery_address,
         )
 
         # Считаем требуемое количество по заявке (агрегировано по item)
